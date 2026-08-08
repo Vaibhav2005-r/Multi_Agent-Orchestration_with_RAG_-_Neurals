@@ -75,8 +75,8 @@ results = pipeline.search("What are the rules regarding loan disbursals?", k=3)
 ```
 
 ### Jupyter Notebooks
-- [`pipeline_demo.ipynb`](pipeline_demo.ipynb): Step-by-step interactive demonstration notebook.
-- [`pipeline.ipynb`](pipeline.ipynb) / [`document_pipeline.ipynb`](document_pipeline.ipynb): Interactive pipeline workflow.
+- [`pipeline.ipynb`](pipeline.ipynb): Interactive pipeline execution notebook.
+- [`document_pipeline.ipynb`](document_pipeline.ipynb): Complete document enrichment workflow.
 
 ---
 

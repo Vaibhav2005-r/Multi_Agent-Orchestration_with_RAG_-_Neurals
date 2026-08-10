@@ -6,6 +6,9 @@ from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
+import asyncio
+
+from SecurityLayer.security_orchestrator import SecurityOrchestrator
 
 # Load environment variables
 load_dotenv()
@@ -31,6 +34,9 @@ class QueryEnricher:
             api_key=self.api_key,
             temperature=temperature
         )
+        
+        # Initialize unified Security Orchestrator
+        self.security_orchestrator = SecurityOrchestrator()
         
         self.parser = JsonOutputParser(pydantic_object=EnrichedQuery)
         
@@ -69,16 +75,30 @@ class QueryEnricher:
             
         return "\n".join(formatted)
 
-    def enrich(self, query: str, chat_history: Optional[List[Dict[str, str]]] = None) -> Dict:
+    def enrich(self, query: str, chat_history: Optional[List[Dict[str, str]]] = None, user_role: str = "GUEST") -> Dict:
         """
         Takes a raw user query and chat history, and returns the enriched query payload.
         """
         history_str = self.format_chat_history(chat_history)
         
-        print(f"Enriching query: '{query}'")
+        print(f"Running Security Orchestrator for user role '{user_role}' on query: '{query}'")
+        security_result = self.security_orchestrator.evaluate_query(query, user_role=user_role)
+        
+        if security_result["status"] == "BLOCK":
+            print(f"Query Blocked: {security_result.get('reason')}")
+            return {
+                "original_query": query,
+                "semantic_expansion": [],
+                "rewritten_query": "Query not allowed. " + security_result.get('reason', '')
+            }
+            
+        # If allowed, use the potentially rewritten safe query
+        safe_query = security_result["query"]
+        
+        print(f"Enriching safe query: '{safe_query}'")
         try:
             result = self.chain.invoke({
-                "query": query,
+                "query": safe_query,
                 "chat_history": history_str
             })
             return result

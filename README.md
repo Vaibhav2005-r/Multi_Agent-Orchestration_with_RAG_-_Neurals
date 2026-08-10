@@ -87,6 +87,9 @@ python3 QueryNLP/entity_extraction.py
 
 # Test Spelling Correction & Qdrant Search
 python3 QueryNLP/spelling_correction.py
+
+# Test Query Enrichment (Semantic Expansion & Context-Aware Rewriting)
+python3 query_enrichment.py
 ```
 
 ---

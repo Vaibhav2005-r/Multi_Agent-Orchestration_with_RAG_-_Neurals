@@ -21,6 +21,12 @@ An enterprise-grade financial document ingestion, metadata enrichment, and retri
    - **Entity Extraction**: Uses NVIDIA structured outputs to parse domain entities dynamically from queries.
    - **Spelling Correction & Rewrite**: LLM-driven spell check and semantic expansion prior to vector retrieval.
    - **Dense Query Embedding**: Instantly generates embeddings via NeMo Retriever for hybrid searches.
+6. **Unified Security Layer (`SecurityLayer/`)**:
+   - **PII Guardrail**: Uses NeMo Guardrails to proactively detect and mask PII (e.g. Emails, Phones, SSNs, Persons, Organizations).
+   - **Access Authorization**: Enforces strict Role-Based Access Control (RBAC) classifications to prevent unauthorized data retrieval.
+   - **Content Safety Guard**: Blocks toxic, illegal, or unethical inputs seamlessly using LLaMA Content Safety endpoints.
+   - **Prompt Injection Guard**: Detects and halts adversarial logic, jailbreaks, and overrides across both user queries and retrieved context.
+   - **Security Orchestrator**: The master gateway that integrates all checks, failing-fast for malicious intent, or seamlessly invoking a Privacy Sanitizer LLM chain to rewrite and anonymize sensitive queries gracefully.
 
 ---
 
@@ -37,7 +43,9 @@ flowchart TD
     Q[User Query] --> G[QueryNLP: Spelling Correction / Rewrite]
     G --> H[QueryNLP: Intent Classification RNN]
     G --> I[QueryNLP: Entity Extraction]
-    G --> J[QueryNLP: Dense Embedding]
+    G --> S[SecurityLayer Orchestrator:<br/>PII, Safety, Auth, Injection Checks]
+    S --> |Blocked| B1[Query Rejected]
+    S --> |Allowed / Rewritten| J[QueryNLP: Dense Embedding]
     
     J --> F
     F --> K[Semantic Retrieval & Agent Orchestration]

@@ -38,7 +38,7 @@ The primary workhorse LLM used for structured data extraction and logical reason
 ## 📦 Module Usage & Architecture
 
 ```mermaid
-flowchart TD
+flowchart LR
     %% Ingestion Pipeline
     subgraph Data Ingestion
         A[Data Directory PDFs / TXT] --> B[Document Loader]

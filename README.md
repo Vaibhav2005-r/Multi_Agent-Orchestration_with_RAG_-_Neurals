@@ -50,40 +50,40 @@ flowchart TD
     
     %% Query Pipeline
     subgraph Query Execution & RAG Orchestration
-        Q[User Query] --> G[QueryNLP: Spelling Correction / Rewrite]
-        G --> H[QueryNLP: Intent Classification RNN]
-        G --> I[QueryNLP: Entity Extraction]
-        G --> S[SecurityLayer Orchestrator:<br/>PII, Safety, Auth, Injection Checks]
+        Q[User Query] --> MO[Master RAG Orchestrator]
+        MO --> HRP[Hybrid Retrieval Pipeline]
+        
+        HRP --> S[SecurityLayer Orchestrator:<br/>PII, Safety, Auth, Injection Checks]
         S --> |Blocked| B1[Query Rejected]
         
-        S --> |Allowed / Rewritten| QE[Query Enrichment]
-        QE --> HRP[Hybrid Retrieval Pipeline<br/>BM25 + Qdrant Vector Search]
+        S --> |Allowed / Sanitized| H_Search[Hybrid Search:<br/>BM25 + Qdrant Vector Search]
+        H_Search --> |RRF Fusion: Top 20 Candidates| MO
         
-        HRP --> |Top 20 Candidates| DEDUP[Semantic Deduplicator<br/>NVIDIA Embeddings Filter]
+        MO --> DEDUP[Semantic Deduplicator<br/>NVIDIA Embeddings Filter]
         DEDUP --> |Unique Docs| FR[FlashRank Local Reranker]
         FR --> |Top 10 Docs| NR[NVIDIA Cloud Reranker<br/>Cross-Encoder]
         NR --> |Top 3 Docs| LCR[Context Packager<br/>LongContextReorder]
-        LCR --> |Reordered Docs| MO[Master RAG Orchestrator<br/>Final String Assembly]
+        LCR --> |Reordered Docs| FA[Final String Assembly]
         
-        MO --> LLM[Generator LLM]
+        FA --> LLM[Generator LLM]
     end
 ```
 
 ### 🏗️ Detailed System Workflow Architecture
 
-The entire process is highly decoupled, allowing each agentic module to execute a specific task flawlessly before passing the baton:
+The currently implemented orchestration pipeline seamlessly strings together several modules to execute a flawless context assembly process:
 
-1. **Query Pre-Processing (`QueryNLP/`)**: When a user inputs a query, it first goes through local HuggingFace NLP models to correct spelling and extract key named entities. Simultaneously, a custom PyTorch BiLSTM model classifies the *Intent* of the query to determine what type of data the user is seeking.
-2. **Security & Guardrails (`SecurityLayer/`)**: Before touching any database, the query is intercepted by the `SecurityOrchestrator`. Using NVIDIA NeMo Guardrails, it scans for prompt injection attacks, toxic content, and strictly enforces Role-Based Access Control (RBAC). If Personally Identifiable Information (PII) is detected, it is immediately masked/sanitized via LLM rewriting.
-3. **Query Enrichment (`query_enrichment.py`)**: The sanitized query is expanded semantically using the LLM to include synonyms and contextual chat history, ensuring maximum recall during vector search.
-4. **Master Retrieval Orchestration (`rag_retrieval/master_orchestrator.py`)**:
-    *   **Hybrid Fetching**: Executes a BM25 sparse keyword search alongside a Qdrant dense vector search. The results are fused using Reciprocal Rank Fusion (RRF) to pull a broad set of ~20 candidate chunks.
-    *   **Semantic Deduplication**: Compares the cosine similarity of the candidates using the `llama-nemotron-embed` model and drops redundant overlapping text.
-    *   **Cascaded Reranking**: 
-        *   Passes the remaining unique chunks through `FlashRank` (a lightning-fast local model) to narrow the pool down to the Top 10.
-        *   Passes those Top 10 to the heavyweight `NVIDIA Cross-Encoder`, which rigorously scores them and selects the absolute Top 3 most relevant chunks.
-    *   **Context Packaging**: Feeds the Top 3 chunks into LlamaIndex's `LongContextReorder`. This mitigates the notorious "Lost in the Middle" LLM hallucination effect by placing the highest-scoring chunk at the very beginning of the prompt and the second-highest at the very end.
-5. **Final Assembly**: The orchestrator outputs a cleanly formatted string containing the perfectly curated context, ready for generation.
+1. **Master RAG Orchestrator (`rag_retrieval/master_orchestrator.py`)**: The central nervous system of the RAG retrieval flow. It receives the raw user query and manages the entire lifecycle of the retrieval process.
+2. **Security & Guardrails (`SecurityLayer/`)**: The query is immediately passed into the `HybridRetrievalPipeline`, which first routes it through the `SecurityOrchestrator`. Using NVIDIA NeMo Guardrails, it scans for prompt injection attacks, toxic content, and strictly enforces Role-Based Access Control (RBAC). If Personally Identifiable Information (PII) is detected, it is immediately masked/sanitized via LLM rewriting.
+3. **Hybrid Fetching**: Once sanitized, the query executes a BM25 sparse keyword search alongside a Qdrant dense vector search. The results are fused using Reciprocal Rank Fusion (RRF) to pull a broad set of ~20 candidate chunks.
+4. **Semantic Deduplication**: Compares the cosine similarity of the candidates using the `llama-nemotron-embed` model and drops redundant overlapping text.
+5. **Cascaded Reranking**: 
+    *   Passes the remaining unique chunks through `FlashRank` (a lightning-fast local model) to narrow the pool down to the Top 10.
+    *   Passes those Top 10 to the heavyweight `NVIDIA Cloud Cross-Encoder`, which rigorously scores them and selects the absolute Top 3 most relevant chunks.
+6. **Context Packaging**: Feeds the Top 3 chunks into LlamaIndex's `LongContextReorder`. This mitigates the notorious "Lost in the Middle" LLM hallucination effect by placing the highest-scoring chunk at the very beginning of the prompt and the second-highest at the very end.
+7. **Final Assembly**: The orchestrator outputs a cleanly formatted string containing the perfectly curated context, ready for generation.
+
+*(Note: Standalone modules like `QueryNLP/` and `query_enrichment.py` exist in the repository for intent classification, entity extraction, and semantic expansion, and can be integrated into this flow in the future.)*
 
 ### 1. Document Processing Pipeline (`document_pipeline.py`)
 *   **Usage**: Run `python3 document_pipeline.py`

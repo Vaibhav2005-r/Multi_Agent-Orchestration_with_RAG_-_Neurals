@@ -34,6 +34,25 @@ The primary workhorse LLM used for structured data extraction and logical reason
 
 ## 📦 Module Usage & Architecture
 
+```mermaid
+flowchart TD
+    A[Data Directory PDFs / TXT] --> B[Document Loader]
+    B --> C[Semantic Chunking]
+    C --> D[Granular Metadata Enrichment<br/>ChatNVIDIA.abatch throttled <= 40 RPM]
+    D --> E[Export JSON / JSONL Artifacts]
+    E --> F[(Qdrant Vector DB)]
+    
+    Q[User Query] --> G[QueryNLP: Spelling Correction / Rewrite]
+    G --> H[QueryNLP: Intent Classification RNN]
+    G --> I[QueryNLP: Entity Extraction]
+    G --> S[SecurityLayer Orchestrator:<br/>PII, Safety, Auth, Injection Checks]
+    S --> |Blocked| B1[Query Rejected]
+    S --> |Allowed / Rewritten| J[QueryNLP: Dense Embedding]
+    
+    J --> F
+    F --> K[Semantic Retrieval & Agent Orchestration]
+```
+
 ### 1. Document Processing Pipeline (`document_pipeline.py`)
 *   **Usage**: Run `python3 document_pipeline.py`
 *   **Purpose**: Scans the `Data/` folder for PDFs and TXT files. It loads the text, determines semantic chunk boundaries, extracts structured metadata for every chunk, and saves the highly enriched artifacts to `processed_documents.json` and `processed_documents.jsonl`.

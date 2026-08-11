@@ -58,11 +58,12 @@ flowchart TD
 *   **Purpose**: Scans the `Data/` folder for PDFs and TXT files. It loads the text, determines semantic chunk boundaries, extracts structured metadata for every chunk, and saves the highly enriched artifacts to `processed_documents.json` and `processed_documents.jsonl`.
 *   **Note**: Features a custom asynchronous sliding-window rate limiter to guarantee API calls stay strictly under 40 RPM.
 
-### 2. Vector Database Indexing (`qdrant_indexer.py`)
-*   **Usage**: Run `python3 qdrant_indexer.py`
-*   **Purpose**: Reads the enriched `processed_documents.jsonl` artifacts, generates embeddings for them using `nvidia/nv-embedqa-e5-v5`, and bulk-inserts them into a local persistent Qdrant Vector Database collection.
+### 2. Indexing Pipeline (`qdrant_indexer.py` & `indexing_pipeline.ipynb`)
+*   **Usage**: Run `python3 qdrant_indexer.py` or execute the `indexing_pipeline.ipynb` notebook interactively.
+*   **Purpose**: Reads the enriched `processed_documents.jsonl` artifacts, generates embeddings for them using NVIDIA models (`nvidia/nv-embedqa-e5-v5` or `nvidia/llama-nemotron-embed-1b-v2`), and bulk-inserts them into a local persistent Qdrant Vector Database collection.
+*   **Features**: The `indexing_pipeline.ipynb` provides an interactive demonstration of loading the enriched chunks, testing the embedding generation, indexing to Qdrant, and performing basic semantic similarity searches.
 
-### 3. Security Layer (`SecurityLayer/`)
+### 3. Security Pipeline (`SecurityLayer/`)
 *   **Usage**: Automatically invoked during the query pipeline via `SecurityOrchestrator`.
 *   **Purpose**: A unified defense-in-depth layer that intercepts user queries before any processing:
     *   **PII Guardrail**: Detects sensitive data.
@@ -71,13 +72,13 @@ flowchart TD
     *   **Prompt Injection Guard**: Detects adversarial jailbreak attempts.
     *   **Security Orchestrator**: Manages these guards, failing fast on malicious intent or triggering a Privacy Sanitizer to mask PII gracefully.
 
-### 4. Query Processing & Enrichment (`QueryNLP/` and `query_enrichment.py`)
+### 4. Query Processing Pipeline (`QueryNLP/`, `query_embedding.py`, and `query_enrichment.py`)
 *   **Usage**: Run `python3 query_enrichment.py` (or other scripts in `QueryNLP/` for individual tests).
 *   **Purpose**: Takes the sanitized user query and prepares it for the retrieval agent:
-    *   **Intent Detection**: Routes the query based on classification.
-    *   **Spelling & Entity Extraction**: Normalizes the text and pulls key terms.
-    *   **Query Enrichment**: Expands the query semantically and factors in prior conversational chat history.
-    *   **Query Embedding**: Vectorizes the finalized query for Qdrant retrieval.
+    *   **Intent Detection (`QueryNLP/`)**: Routes the query based on classification.
+    *   **Spelling & Entity Extraction (`QueryNLP/`)**: Normalizes the text and pulls key terms.
+    *   **Query Enrichment (`query_enrichment.py`)**: Expands the query semantically and factors in prior conversational chat history.
+    *   **Query Embedding (`query_embedding.py`)**: Vectorizes the finalized query for Qdrant retrieval.
 
 ---
 

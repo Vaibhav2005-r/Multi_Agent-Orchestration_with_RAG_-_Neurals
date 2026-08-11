@@ -72,13 +72,14 @@ flowchart TD
     *   **Prompt Injection Guard**: Detects adversarial jailbreak attempts.
     *   **Security Orchestrator**: Manages these guards, failing fast on malicious intent or triggering a Privacy Sanitizer to mask PII gracefully.
 
-### 4. Query Processing Pipeline (`QueryNLP/`, `query_embedding.py`, and `query_enrichment.py`)
-*   **Usage**: Run `python3 query_enrichment.py` (or other scripts in `QueryNLP/` for individual tests).
+### 4. Query Processing Pipeline (`QueryNLP/`, `query_embedding.py`, `query_enrichment.py`, and `retrieval_pipeline.py`)
+*   **Usage**: Run `python3 retrieval_pipeline.py` to test the full hybrid retrieval search, or `python3 query_enrichment.py` for individual NLP tests.
 *   **Purpose**: Takes the sanitized user query and prepares it for the retrieval agent:
     *   **Intent Detection (`QueryNLP/`)**: Routes the query based on classification.
     *   **Spelling & Entity Extraction (`QueryNLP/`)**: Normalizes the text and pulls key terms.
     *   **Query Enrichment (`query_enrichment.py`)**: Expands the query semantically and factors in prior conversational chat history.
     *   **Query Embedding (`query_embedding.py`)**: Vectorizes the finalized query for Qdrant retrieval.
+    *   **Hybrid Retrieval (`retrieval_pipeline.py`)**: Executes a hybrid search combining BM25 keyword matching with Qdrant Vector search using Reciprocal Rank Fusion, strictly gated by the Security Orchestrator.
 
 ---
 

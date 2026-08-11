@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from langchain_core.documents import Document
 from langchain_nvidia_ai_endpoints import NVIDIARerank
 
-from optimized_vector_search import OptimizedVectorSearch
+from rag_retrieval.optimized_vector_search import OptimizedVectorSearch
 
 # Load environment variables
 load_dotenv()
@@ -80,3 +80,6 @@ if __name__ == "__main__":
         print(f"Title: {res.metadata.get('chunk_title')}")
         print(f"Entities: {res.metadata.get('entities')}")
         print(f"Content: {res.page_content[:300]}...")
+
+    # Explicitly close the Qdrant client to avoid shutdown exceptions
+    pipeline.vector_search.client.close()

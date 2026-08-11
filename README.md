@@ -2,7 +2,7 @@
 
 An enterprise-grade financial document ingestion, metadata enrichment, and retrieval pipeline powered by **NVIDIA AI Endpoints**, **Qdrant Vector Database**, and **PyTorch RNNs**. 
 
-This system acts as a secure, intelligent backend that processes complex regulatory and financial documents, indexes them semantically, and orchestrates user queries through a rigorous pipeline of security guardrails, intent classification, and query rewriting before performing a vector search.
+This system acts as a secure, intelligent backend that processes complex regulatory and financial documents, indexes them semantically, and orchestrates user queries through a rigorous pipeline of security guardrails, intent classification, query rewriting, hybrid search, and cascaded reranking.
 
 ---
 
@@ -22,13 +22,16 @@ The primary workhorse LLM used for structured data extraction and logical reason
 *   **Vector Database Indexing (`qdrant_indexer.py`)**: Embeds the enriched document chunks into high-dimensional dense vectors to be stored in the persistent Qdrant database.
 
 ### 3. `nvidia/llama-nemotron-embed-1b-v2` (via NVIDIA API)
-*   **Query Embedding (`query_embedding.py`)**: A lightweight, highly efficient embedding model used specifically to vectorize incoming user queries rapidly for semantic matching against the Qdrant index.
+*   **Query Embedding & Deduplication**: A lightweight, highly efficient embedding model used specifically to vectorize incoming user queries rapidly for semantic matching, and for semantic deduplication of retrieved chunks.
 
 ### 4. `nvidia/llama-3.1-nemoguard-8b-content-safety` (via NVIDIA API)
 *   **Content Safety Guard (`SecurityLayer/content_safety_guard.py`)**: A specialized NeMo Guardrails model used exclusively to detect and block toxic, illegal, or unethical content in user prompts.
 
-### 5. `distilbert-base-uncased` + Custom PyTorch BiLSTM
-*   **Intent Classification (`QueryNLP/intent_detection.py`, `QueryNLP/query_classification.py`)**: A locally trained PyTorch model. The transformer weights are frozen, and a Bidirectional LSTM is trained on top of it using the synthetic QA pairs generated during document ingestion. It classifies user queries into specific domain intents (e.g., *Regulatory Guideline*, *Annual Report*).
+### 5. `nvidia/llama-nemotron-rerank-1b-v2` & `FlashRank`
+*   **Cascaded Reranking (`rag_retrieval/`)**: FlashRank (`ms-marco-MultiBERT-L-12`) is used locally to quickly filter candidates, followed by the heavy NVIDIA cross-encoder to precisely rerank the absolute best chunks for context assembly.
+
+### 6. `distilbert-base-uncased` + Custom PyTorch BiLSTM
+*   **Intent Classification (`QueryNLP/intent_detection.py`)**: A locally trained PyTorch model to classify user queries into specific domain intents (e.g., *Regulatory Guideline*, *Annual Report*).
 
 ---
 
@@ -36,21 +39,34 @@ The primary workhorse LLM used for structured data extraction and logical reason
 
 ```mermaid
 flowchart TD
-    A[Data Directory PDFs / TXT] --> B[Document Loader]
-    B --> C[Semantic Chunking]
-    C --> D[Granular Metadata Enrichment<br/>ChatNVIDIA.abatch throttled <= 40 RPM]
-    D --> E[Export JSON / JSONL Artifacts]
-    E --> F[(Qdrant Vector DB)]
+    %% Ingestion Pipeline
+    subgraph Data Ingestion
+        A[Data Directory PDFs / TXT] --> B[Document Loader]
+        B --> C[Semantic Chunking]
+        C --> D[Granular Metadata Enrichment<br/>ChatNVIDIA.abatch throttled <= 40 RPM]
+        D --> E[Export JSON / JSONL Artifacts]
+        E --> F[(Qdrant Vector DB)]
+    end
     
-    Q[User Query] --> G[QueryNLP: Spelling Correction / Rewrite]
-    G --> H[QueryNLP: Intent Classification RNN]
-    G --> I[QueryNLP: Entity Extraction]
-    G --> S[SecurityLayer Orchestrator:<br/>PII, Safety, Auth, Injection Checks]
-    S --> |Blocked| B1[Query Rejected]
-    S --> |Allowed / Rewritten| J[QueryNLP: Dense Embedding]
-    
-    J --> F
-    F --> K[Semantic Retrieval & Agent Orchestration]
+    %% Query Pipeline
+    subgraph Query Execution & RAG Orchestration
+        Q[User Query] --> G[QueryNLP: Spelling Correction / Rewrite]
+        G --> H[QueryNLP: Intent Classification RNN]
+        G --> I[QueryNLP: Entity Extraction]
+        G --> S[SecurityLayer Orchestrator:<br/>PII, Safety, Auth, Injection Checks]
+        S --> |Blocked| B1[Query Rejected]
+        
+        S --> |Allowed / Rewritten| QE[Query Enrichment]
+        QE --> HRP[Hybrid Retrieval Pipeline<br/>BM25 + Qdrant Vector Search]
+        
+        HRP --> |Top 20 Candidates| DEDUP[Semantic Deduplicator<br/>NVIDIA Embeddings Filter]
+        DEDUP --> |Unique Docs| FR[FlashRank Local Reranker]
+        FR --> |Top 10 Docs| NR[NVIDIA Cloud Reranker<br/>Cross-Encoder]
+        NR --> |Top 3 Docs| LCR[Context Packager<br/>LongContextReorder]
+        LCR --> |Reordered Docs| MO[Master RAG Orchestrator<br/>Final String Assembly]
+        
+        MO --> LLM[Generator LLM]
+    end
 ```
 
 ### 1. Document Processing Pipeline (`document_pipeline.py`)
@@ -59,27 +75,25 @@ flowchart TD
 *   **Note**: Features a custom asynchronous sliding-window rate limiter to guarantee API calls stay strictly under 40 RPM.
 
 ### 2. Indexing Pipeline (`qdrant_indexer.py` & `indexing_pipeline.ipynb`)
-*   **Usage**: Run `python3 qdrant_indexer.py` or execute the `indexing_pipeline.ipynb` notebook interactively.
-*   **Purpose**: Reads the enriched `processed_documents.jsonl` artifacts, generates embeddings for them using NVIDIA models (`nvidia/nv-embedqa-e5-v5` or `nvidia/llama-nemotron-embed-1b-v2`), and bulk-inserts them into a local persistent Qdrant Vector Database collection.
-*   **Features**: The `indexing_pipeline.ipynb` provides an interactive demonstration of loading the enriched chunks, testing the embedding generation, indexing to Qdrant, and performing basic semantic similarity searches.
+*   **Usage**: Run `python3 qdrant_indexer.py`
+*   **Purpose**: Bulk-inserts enriched chunks into a local persistent Qdrant Vector Database collection using dense vectors.
 
-### 3. Security Pipeline (`SecurityLayer/`)
-*   **Usage**: Automatically invoked during the query pipeline via `SecurityOrchestrator`.
-*   **Purpose**: A unified defense-in-depth layer that intercepts user queries before any processing:
-    *   **PII Guardrail**: Detects sensitive data.
-    *   **Access Authorization**: Validates the user's role against requested operations.
-    *   **Content Safety Guard**: Blocks toxic inputs.
-    *   **Prompt Injection Guard**: Detects adversarial jailbreak attempts.
-    *   **Security Orchestrator**: Manages these guards, failing fast on malicious intent or triggering a Privacy Sanitizer to mask PII gracefully.
+### 3. Query NLP & Security Pipeline (`QueryNLP/` & `SecurityLayer/`)
+*   **Usage**: Automatically invoked during the query pipeline via `SecurityOrchestrator` and `query_enrichment.py`.
+*   **Purpose**: Intercepts and enhances user queries before processing:
+    *   **Intent Detection**: Routes the query based on classification via a PyTorch RNN.
+    *   **Spelling & Entity Extraction**: Normalizes text and pulls key terms.
+    *   **Security Guardrails**: Detects and masks sensitive PII, validates RBAC, blocks toxic inputs, and detects adversarial jailbreak attempts.
+    *   **Query Enrichment**: Expands the query semantically and factors in prior conversational chat history.
 
-### 4. Query Processing Pipeline (`QueryNLP/`, `query_embedding.py`, `query_enrichment.py`, and `retrieval_pipeline.py`)
-*   **Usage**: Run `python3 retrieval_pipeline.py` to test the full hybrid retrieval search, or `python3 query_enrichment.py` for individual NLP tests.
-*   **Purpose**: Takes the sanitized user query and prepares it for the retrieval agent:
-    *   **Intent Detection (`QueryNLP/`)**: Routes the query based on classification.
-    *   **Spelling & Entity Extraction (`QueryNLP/`)**: Normalizes the text and pulls key terms.
-    *   **Query Enrichment (`query_enrichment.py`)**: Expands the query semantically and factors in prior conversational chat history.
-    *   **Query Embedding (`query_embedding.py`)**: Vectorizes the finalized query for Qdrant retrieval.
-    *   **Hybrid Retrieval (`retrieval_pipeline.py`)**: Executes a hybrid search combining BM25 keyword matching with Qdrant Vector search using Reciprocal Rank Fusion, strictly gated by the Security Orchestrator.
+### 4. Master RAG Orchestrator (`rag_retrieval/master_orchestrator.py`)
+*   **Usage**: Run `python -m rag_retrieval.master_orchestrator`
+*   **Purpose**: The central nervous system of the RAG retrieval flow. Connects all modules to execute a flawless context assembly process:
+    *   **Secure Hybrid Search**: Combines BM25 and Qdrant dense vector search protected by the SecurityLayer.
+    *   **Semantic Deduplication**: Drops redundant candidate chunks (`context_assembly.py`).
+    *   **Cascaded Reranking**: Filters candidates rapidly via Local FlashRank, then precisely reranks via Cloud NVIDIA Cross-Encoder (`reranking_pipeline.py`).
+    *   **Context Packaging**: Uses LlamaIndex's `LongContextReorder` to position the most critical chunks at the extreme beginning and end of the prompt window to defeat the "Lost in the Middle" LLM hallucination effect.
+    *   **Output String Generation**: Automatically compiles the final, curated documents into a structured prompt string ready to be injected into a generator LLM.
 
 ---
 
@@ -89,9 +103,9 @@ flowchart TD
 ```bash
 git clone https://github.com/Vaibhav2005-r/Multi_Agent-Orchestration_with_RAG_-_Neurals.git
 cd Multi_Agent-Orchestration_with_RAG_-_Neurals
-pip install langchain-nvidia-ai-endpoints langchain-core langchain-qdrant qdrant-client pypdf pymupdf python-dotenv pandas torch transformers nemoguardrails nest_asyncio
+pip install langchain-nvidia-ai-endpoints langchain-core langchain-qdrant qdrant-client pypdf pymupdf python-dotenv pandas torch transformers nemoguardrails nest_asyncio flashrank llama-index-core
 ```
-> **Note for Windows Users:** The `nemoguardrails` dependency (specifically the `annoy` package) requires [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) to be installed.
+> **Note for Windows Users:** The `nemoguardrails` dependency requires [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) to be installed.
 
 ### 2. Configure Environment Variables
 Create a `.env` file in the root directory and add your API key from [build.nvidia.com](https://build.nvidia.com):

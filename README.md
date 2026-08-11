@@ -69,6 +69,22 @@ flowchart TD
     end
 ```
 
+### 🏗️ Detailed System Workflow Architecture
+
+The entire process is highly decoupled, allowing each agentic module to execute a specific task flawlessly before passing the baton:
+
+1. **Query Pre-Processing (`QueryNLP/`)**: When a user inputs a query, it first goes through local HuggingFace NLP models to correct spelling and extract key named entities. Simultaneously, a custom PyTorch BiLSTM model classifies the *Intent* of the query to determine what type of data the user is seeking.
+2. **Security & Guardrails (`SecurityLayer/`)**: Before touching any database, the query is intercepted by the `SecurityOrchestrator`. Using NVIDIA NeMo Guardrails, it scans for prompt injection attacks, toxic content, and strictly enforces Role-Based Access Control (RBAC). If Personally Identifiable Information (PII) is detected, it is immediately masked/sanitized via LLM rewriting.
+3. **Query Enrichment (`query_enrichment.py`)**: The sanitized query is expanded semantically using the LLM to include synonyms and contextual chat history, ensuring maximum recall during vector search.
+4. **Master Retrieval Orchestration (`rag_retrieval/master_orchestrator.py`)**:
+    *   **Hybrid Fetching**: Executes a BM25 sparse keyword search alongside a Qdrant dense vector search. The results are fused using Reciprocal Rank Fusion (RRF) to pull a broad set of ~20 candidate chunks.
+    *   **Semantic Deduplication**: Compares the cosine similarity of the candidates using the `llama-nemotron-embed` model and drops redundant overlapping text.
+    *   **Cascaded Reranking**: 
+        *   Passes the remaining unique chunks through `FlashRank` (a lightning-fast local model) to narrow the pool down to the Top 10.
+        *   Passes those Top 10 to the heavyweight `NVIDIA Cross-Encoder`, which rigorously scores them and selects the absolute Top 3 most relevant chunks.
+    *   **Context Packaging**: Feeds the Top 3 chunks into LlamaIndex's `LongContextReorder`. This mitigates the notorious "Lost in the Middle" LLM hallucination effect by placing the highest-scoring chunk at the very beginning of the prompt and the second-highest at the very end.
+5. **Final Assembly**: The orchestrator outputs a cleanly formatted string containing the perfectly curated context, ready for generation.
+
 ### 1. Document Processing Pipeline (`document_pipeline.py`)
 *   **Usage**: Run `python3 document_pipeline.py`
 *   **Purpose**: Scans the `Data/` folder for PDFs and TXT files. It loads the text, determines semantic chunk boundaries, extracts structured metadata for every chunk, and saves the highly enriched artifacts to `processed_documents.json` and `processed_documents.jsonl`.

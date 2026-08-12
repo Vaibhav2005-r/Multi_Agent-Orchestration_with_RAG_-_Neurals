@@ -33,6 +33,12 @@ The primary workhorse LLM used for structured data extraction and logical reason
 ### 6. `distilbert-base-uncased` + Custom PyTorch BiLSTM
 *   **Intent Classification (`QueryNLP/intent_detection.py`)**: A locally trained PyTorch model to classify user queries into specific domain intents (e.g., *Regulatory Guideline*, *Annual Report*).
 
+### 7. `nvidia/nemotron-3-super-120b-a12b` (via NVIDIA API)
+*   **Answer Synthesis (`answer_synthesis/generator_llm.py`)**: The primary generator model responsible for synthesizing final comprehensive answers from the highly curated context, strictly enforcing a professional, executive-level tone.
+
+### 8. `vectara/hallucination_evaluation_model` (via HuggingFace/Local)
+*   **Post-Processing & Fact Verification (`answer_synthesis/post_processing.py`)**: A local cross-encoder model that evaluates the generated answer against the retrieved context to calculate a factual consistency score. If a hallucination is detected, safety guardrails are dynamically injected.
+
 ---
 
 ## 📦 Module Usage & Architecture
@@ -64,8 +70,14 @@ flowchart LR
         FR --> |Top 10 Docs| NR[NVIDIA Cloud Reranker<br/>Cross-Encoder]
         NR --> |Top 3 Docs| LCR[Context Packager<br/>LongContextReorder]
         LCR --> |Reordered Docs| FA[Final String Assembly]
-        
-        FA --> LLM[Generator LLM]
+    end
+
+    %% Synthesis Pipeline
+    subgraph Answer Synthesis
+        FA --> PC[Prompt Constructor:<br/>Tone & Instruction Injection]
+        PC --> GLLM[Generator LLM<br/>Nemotron-3-Super-120b]
+        GLLM --> PP[Post Processor:<br/>Fact Verification & Confidence Scoring]
+        PP --> |Hallucination Check & Follow-Up| OUT[Final Formatted Response]
     end
 ```
 
@@ -82,6 +94,8 @@ The currently implemented orchestration pipeline seamlessly strings together sev
     *   Passes those Top 10 to the heavyweight `NVIDIA Cloud Cross-Encoder`, which rigorously scores them and selects the absolute Top 3 most relevant chunks.
 6. **Context Packaging**: Feeds the Top 3 chunks into LlamaIndex's `LongContextReorder`. This mitigates the notorious "Lost in the Middle" LLM hallucination effect by placing the highest-scoring chunk at the very beginning of the prompt and the second-highest at the very end.
 7. **Final Assembly**: The orchestrator outputs a cleanly formatted string containing the perfectly curated context, ready for generation.
+8. **Answer Synthesis**: The `PromptConstructor` wraps the query and context with strict behavioral instructions (e.g., executive-level tone). The `GeneratorLLM` generates the response.
+9. **Post-Processing & Hallucination Guardrails**: The output is evaluated against the source context by a local Vectara Hallucination cross-encoder. It injects confidence scores, dynamically appends source citations, generates a follow-up question, and adds safety warnings if hallucinations are detected.
 
 *(Note: Standalone modules like `QueryNLP/` and `query_enrichment.py` exist in the repository for intent classification, entity extraction, and semantic expansion, and can be integrated into this flow in the future.)*
 
@@ -110,6 +124,13 @@ The currently implemented orchestration pipeline seamlessly strings together sev
     *   **Cascaded Reranking**: Filters candidates rapidly via Local FlashRank, then precisely reranks via Cloud NVIDIA Cross-Encoder (`reranking_pipeline.py`).
     *   **Context Packaging**: Uses LlamaIndex's `LongContextReorder` to position the most critical chunks at the extreme beginning and end of the prompt window to defeat the "Lost in the Middle" LLM hallucination effect.
     *   **Output String Generation**: Automatically compiles the final, curated documents into a structured prompt string ready to be injected into a generator LLM.
+
+### 5. Answer Synthesis Pipeline (`answer_synthesis/`)
+*   **Usage**: Run `python -m answer_synthesis.generator_llm`
+*   **Purpose**: The final generation and evaluation stage of the pipeline:
+    *   **Prompt Construction**: Injects formatting, security, and tone rules (`prompt_construction.py`).
+    *   **Generation**: Uses `nvidia/nemotron-3-super-120b-a12b` to synthesize the response.
+    *   **Fact Verification & Post-Processing**: Calculates factual consistency using `vectara/hallucination_evaluation_model`, adds confidence scores, extracts citations, suggests follow-up questions, and dynamically prepends safety warnings if hallucinatory behavior is detected (`post_processing.py`).
 
 ---
 

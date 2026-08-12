@@ -16,21 +16,6 @@ Usage:
 import os
 import sys
 import time
-import io
-
-# ── Force UTF-8 on Windows stdout/stderr ──────────────────────────────
-# Prevents 'charmap' codec errors from emoji/Unicode in pipeline output.
-os.environ.setdefault("PYTHONUTF8", "1")
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-if hasattr(sys.stderr, "reconfigure"):
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-# Fallback for older Python or wrapped streams
-if not hasattr(sys.stdout, "reconfigure") or sys.stdout.encoding != "utf-8":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-if not hasattr(sys.stderr, "reconfigure") or sys.stderr.encoding != "utf-8":
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
-
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv

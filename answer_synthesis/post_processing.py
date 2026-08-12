@@ -12,48 +12,30 @@ if not hasattr(PreTrainedModel, "all_tied_weights_keys"):
 
 class PostProcessor:
     def __init__(self):
-        print("\n--- Post-Processor ready (hallucination model loads lazily on first use) ---")
+        print("\n--- Initializing Post-Processor (Hallucination Detection) ---")
         self.model_name = "vectara/hallucination_evaluation_model"
-        self._tokenizer = None
-        self._model = None
-
-        # Determine device once
+        
+        # Determine device
         if torch.cuda.is_available():
             self.device = torch.device("cuda")
         elif torch.backends.mps.is_available():
             self.device = torch.device("mps")
         else:
             self.device = torch.device("cpu")
-
-    def _ensure_loaded(self):
-        """Lazy-loads the model on the first hallucination check call."""
-        if self._model is not None:
-            return
-        print(f"[PostProcessor] Lazy-loading hallucination model ({self.model_name}) to {self.device}...")
-        self._tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-base")
-        self._model = AutoModelForSequenceClassification.from_pretrained(
-            self.model_name, trust_remote_code=True
-        ).to(self.device)
+            
+        print(f"Loading tokenizer & model ({self.model_name}) to {self.device}...")
+        self.tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-base")
+        self.model = AutoModelForSequenceClassification.from_pretrained(self.model_name, trust_remote_code=True).to(self.device)
+        
         # Manually tie the missing embedding weights to the shared weights
-        if hasattr(self._model, "t5") and hasattr(self._model.t5, "transformer"):
-            if hasattr(self._model.t5.transformer, "shared"):
-                self._model.t5.transformer.encoder.embed_tokens = self._model.t5.transformer.shared
-                if hasattr(self._model.t5.transformer, "decoder"):
-                    self._model.t5.transformer.decoder.embed_tokens = self._model.t5.transformer.shared
-        self._model.eval()
-        print("[PostProcessor] Hallucination model ready.")
-
-    @property
-    def tokenizer(self):
-        self._ensure_loaded()
-        return self._tokenizer
-
-    @property
-    def model(self):
-        self._ensure_loaded()
-        return self._model
-
-
+        if hasattr(self.model, "t5") and hasattr(self.model.t5, "transformer"):
+            if hasattr(self.model.t5.transformer, "shared"):
+                self.model.t5.transformer.encoder.embed_tokens = self.model.t5.transformer.shared
+                if hasattr(self.model.t5.transformer, "decoder"):
+                    self.model.t5.transformer.decoder.embed_tokens = self.model.t5.transformer.shared
+                    
+        self.model.eval()
+        print("Post-Processor Initialized Successfully!\n")
 
     def evaluate_hallucination(self, context: str, response: str) -> dict:
         """

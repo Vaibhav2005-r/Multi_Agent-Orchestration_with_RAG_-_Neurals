@@ -106,7 +106,7 @@ class HybridRetrievalPipeline:
             "dates_found": list(dates)
         }
         
-    def retrieve(self, query: str, top_k: int = 6, qdrant_filter: Filter = None):
+    def retrieve(self, query: str, top_k: int = 2, qdrant_filter: Filter = None):
         """
         Executes hybrid BM25 + Qdrant search on a pre-security-cleared query.
         Security checks are performed upstream — do NOT repeat them here.

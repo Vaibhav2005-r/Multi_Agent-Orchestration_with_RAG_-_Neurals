@@ -4,50 +4,7 @@ import MessageBubble from '../components/Chat/MessageBubble'
 
 const API_BASE = 'http://localhost:5000/api'
 
-// Mock response generator for when API is unavailable
-function generateMockResponse(query) {
-  return {
-    final_answer: `**Analysis of Query: "${query}"**
 
-Based on the retrieved regulatory documents, here is the synthesized response:
-
-- This system processes your query through a 4-stage pipeline ensuring accuracy and security.
-- The relevant regulatory guidelines have been cross-referenced and verified.
-- All information has been sourced from the indexed document corpus.
-
-> **Note:** This is a mock response. Connect the Flask API server to get real answers from the pipeline.
-
----
-**Sources / Citations:**
-1. RBI_Guidelines.pdf
-2. NBFC_Rules.pdf
-
-**Factual Confidence Score:** 🟢 87.50%
-
-**Suggested Follow-up:** What are the penalties for non-compliance with these regulations?`,
-    blocked: false,
-    elapsed_seconds: 2.4,
-    stages: {
-      query_processing: {
-        original_query: query,
-        cleaned_query: query,
-        intent: 'REGULATORY_GUIDELINE',
-        entities: ['regulatory', 'compliance'],
-        enriched_query: query + ' in the context of financial regulatory compliance'
-      },
-      security: { status: 'ALLOW', safe_query: query, reason: '' },
-      rag_retrieval: {
-        status: 'SUCCESS',
-        num_documents: 3,
-        sources: ['RBI_Guidelines.pdf', 'NBFC_Rules.pdf']
-      },
-      answer_synthesis: {
-        model: 'nvidia/nemotron-3-super-120b-a12b',
-        hallucination_model: 'vectara/hallucination_evaluation_model'
-      }
-    }
-  }
-}
 
 export default function ChatPage() {
   const [messages, setMessages] = useState([])
@@ -85,23 +42,24 @@ export default function ChatPage() {
     setLoading(true)
 
     try {
-      let data
-      if (apiAvail) {
-        const chatHistory = messages
-          .filter(m => m.role !== 'user' || true)
-          .map(m => ({ role: m.role, content: m.content }))
-
-        const res = await fetch(`${API_BASE}/query`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: userQuery, role, chat_history: chatHistory })
-        })
-        data = await res.json()
-      } else {
-        // Use mock response if API unavailable
-        await new Promise(r => setTimeout(r, 1800))
-        data = generateMockResponse(userQuery)
+      if (!apiAvail) {
+        throw new Error('Flask API server is offline. Please run `python api_server.py` in the project root to enable real pipeline responses.')
       }
+
+      const chatHistory = messages.map(m => ({ role: m.role, content: m.content }))
+
+      const res = await fetch(`${API_BASE}/query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: userQuery, role, chat_history: chatHistory })
+      })
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}))
+        throw new Error(errJson.error || `Server error ${res.status}`)
+      }
+
+      const data = await res.json()
 
       setMessages(prev => [...prev, {
         role: 'assistant',
@@ -147,10 +105,13 @@ export default function ChatPage() {
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           {apiAvail === false && (
-            <span className="badge badge-yellow">Demo Mode — API Offline</span>
+            <span className="badge badge-red" title="Run: python api_server.py">⚠ API Offline — Start api_server.py</span>
+          )}
+          {apiAvail === null && (
+            <span className="badge badge-yellow">Connecting to API…</span>
           )}
           {apiAvail === true && (
-            <span className="badge badge-green">API Connected</span>
+            <span className="badge badge-green">● API Connected</span>
           )}
           <span className="badge badge-purple">Role: {role}</span>
         </div>

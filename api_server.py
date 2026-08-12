@@ -16,6 +16,7 @@ Usage:
 import os
 import sys
 import time
+import threading
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -191,6 +192,56 @@ def run_query():
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Data Ingestion Endpoints
+# ─────────────────────────────────────────────────────────────────────
+def run_ingestion_background(skip_indexing):
+    from ingestion_pipeline import UnifiedIngestionPipeline
+    import asyncio
+    pipeline = UnifiedIngestionPipeline(data_dir="Data/upload_staging", skip_indexing=skip_indexing)
+    asyncio.run(pipeline.run())
+    
+    import shutil
+    if os.path.exists("Data/upload_staging"):
+        for file in os.listdir("Data/upload_staging"):
+            try:
+                shutil.move(os.path.join("Data/upload_staging", file), os.path.join("Data", file))
+            except Exception as e:
+                print(f"Error moving file {file}: {e}")
+
+
+@app.route("/api/upload", methods=["POST"])
+def upload_files():
+    if 'files' not in request.files:
+         return jsonify({"error": "No files uploaded."}), 400
+    
+    files = request.files.getlist('files')
+    saved_files = []
+    
+    os.makedirs("Data/upload_staging", exist_ok=True)
+    
+    from werkzeug.utils import secure_filename
+    for file in files:
+        if file.filename:
+            filename = secure_filename(file.filename)
+            file.save(os.path.join("Data/upload_staging", filename))
+            saved_files.append(filename)
+            
+    return jsonify({"status": "success", "message": f"{len(saved_files)} files uploaded successfully.", "files": saved_files})
+
+
+@app.route("/api/ingest", methods=["POST"])
+def trigger_ingestion():
+    data = request.get_json(force=True, silent=True) or {}
+    skip_indexing = data.get("skip_indexing", False)
+    
+    thread = threading.Thread(target=run_ingestion_background, args=(skip_indexing,))
+    thread.daemon = True
+    thread.start()
+    
+    return jsonify({"status": "started", "message": "Ingestion pipeline started in background."})
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Entry Point
 # ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
@@ -198,4 +249,4 @@ if __name__ == "__main__":
     print("  Multi-Agent RAG — Flask API Server")
     print("  http://localhost:8080")
     print("============================================================")
-    app.run(host="0.0.0.0", port=8080, debug=False)
+    app.run(host="0.0.0.0", port=8080, debug=True)

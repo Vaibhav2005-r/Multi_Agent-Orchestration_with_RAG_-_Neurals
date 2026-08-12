@@ -1,8 +1,8 @@
 from qdrant_client import QdrantClient
 
 # Connect to the local DB
-client = QdrantClient(path="Data/qdrant_db")
-collection_name = "fintech_documents"
+client = QdrantClient(path="Data/qdrant_db_optimized")
+collection_name = "fintech_documents_optimized"
 
 # Get collection info
 info = client.get_collection(collection_name)

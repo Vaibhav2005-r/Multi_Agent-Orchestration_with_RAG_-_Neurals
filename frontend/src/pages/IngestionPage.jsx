@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import {
   FileText, Scissors, Sparkles, Download,
-  Database, CheckCircle, Play, RotateCcw
+  Database, CheckCircle, Play, RotateCcw, Upload
 } from 'lucide-react'
 
 const ICON_MAP = {
@@ -38,6 +38,9 @@ export default function IngestionPage() {
   const [activeIdx, setActiveIdx] = useState(-1)
   const [running, setRunning]     = useState(false)
   const [doneIdxs, setDoneIdxs]   = useState(new Set())
+  const [files, setFiles]         = useState(null)
+  const [uploading, setUploading] = useState(false)
+  const [ingestStatus, setIngestStatus] = useState('')
 
   useEffect(() => {
     setStages(tab === 'ingestion' ? STATIC_INGESTION_STAGES : STATIC_DOC_STAGES)
@@ -73,6 +76,51 @@ export default function IngestionPage() {
     setActiveIdx(-1)
     setDoneIdxs(new Set())
     setRunning(false)
+    setIngestStatus('')
+  }
+
+  const handleFileChange = (e) => {
+    setFiles(e.target.files)
+  }
+
+  const handleUploadAndIngest = async () => {
+    if (!files || files.length === 0) return
+    setUploading(true)
+    setIngestStatus('Uploading files...')
+    
+    const formData = new FormData()
+    for (let i = 0; i < files.length; i++) {
+      formData.append('files', files[i])
+    }
+    
+    try {
+      const uploadRes = await fetch('http://localhost:8080/api/upload', {
+        method: 'POST',
+        body: formData
+      })
+      if (!uploadRes.ok) throw new Error('Upload failed')
+      
+      setIngestStatus('Starting pipeline...')
+      const ingestRes = await fetch('http://localhost:8080/api/ingest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ skip_indexing: false })
+      })
+      if (!ingestRes.ok) throw new Error('Ingestion failed to start')
+      
+      setIngestStatus('Pipeline running in background...')
+      setFiles(null)
+      // Clear file input
+      const fileInput = document.getElementById('file-upload')
+      if (fileInput) fileInput.value = ''
+      
+      runSimulation()
+    } catch (err) {
+      console.error(err)
+      setIngestStatus(`Error: ${err.message}`)
+    } finally {
+      setUploading(false)
+    }
   }
 
   const progress = stages.length > 0
@@ -125,7 +173,31 @@ export default function IngestionPage() {
         </div>
 
         {/* Controls */}
-        <div className="run-btn-wrap">
+        <div className="run-btn-wrap" style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          <input 
+            type="file" 
+            id="file-upload" 
+            multiple 
+            accept=".pdf,.txt,.md" 
+            onChange={handleFileChange}
+            disabled={running || uploading}
+            style={{ 
+              background: 'var(--bg-card)', 
+              color: 'var(--text-main)', 
+              border: '1px solid var(--border)', 
+              padding: '8px', 
+              borderRadius: '6px' 
+            }}
+          />
+          <button 
+            className="btn btn-cyan" 
+            onClick={handleUploadAndIngest} 
+            disabled={!files || files.length === 0 || running || uploading}
+          >
+            <Upload size={14} />
+            {uploading ? 'Uploading...' : 'Upload & Ingest'}
+          </button>
+          
           <button className="btn btn-cyan" onClick={runSimulation} disabled={running}>
             <Play size={14} />
             {running ? 'Running…' : 'Simulate Run'}
@@ -135,6 +207,11 @@ export default function IngestionPage() {
             Reset
           </button>
         </div>
+        {ingestStatus && (
+          <div style={{ marginTop: '1rem', color: 'var(--cyan)', fontSize: '0.9rem' }}>
+            {ingestStatus}
+          </div>
+        )}
 
         {/* Progress */}
         <div className="pipeline-progress">

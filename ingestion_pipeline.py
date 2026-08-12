@@ -48,9 +48,9 @@ class UnifiedIngestionPipeline:
     def __init__(
         self,
         data_dir: str = "Data",
-        qdrant_path: str = "Data/qdrant_db_optimized",
-        collection_name: str = "fintech_documents_optimized",
+        collection_name: str = "fintech_documents",
         embedding_model: str = "nvidia/llama-nemotron-embed-1b-v2",
+        qdrant_path: str = "Data/qdrant_db",
         batch_size: int = 100,
         skip_indexing: bool = False
     ):
@@ -187,8 +187,8 @@ def parse_args():
     parser.add_argument(
         "--collection",
         type=str,
-        default="fintech_documents_optimized",
-        help="Qdrant collection name (default: fintech_documents_optimized)"
+        default="fintech_documents",
+        help="Qdrant collection name (default: fintech_documents)"
     )
     parser.add_argument(
         "--qdrant-path",

@@ -537,15 +537,39 @@ class DocumentPipeline:
     def export_processed_data(
         self,
         json_path: str = "Data/processed_documents.json",
-        jsonl_path: str = "Data/processed_documents.jsonl"
+        jsonl_path: str = "Data/processed_documents.jsonl",
+        append: bool = True
     ):
-        """Exports enriched chunks and metadata to JSON/JSONL format."""
+        """Exports enriched chunks and metadata to JSON/JSONL format, optionally appending to existing files."""
         if not self.enriched_documents:
             print("[Export] No enriched documents to export.")
             return
 
         export_data = []
-        for idx, doc in enumerate(self.enriched_documents, start=1):
+        
+        # Determine starting index for new chunks
+        start_idx = 1
+        existing_data = []
+        
+        if append and os.path.exists(json_path):
+            try:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    existing_data = json.load(f)
+                    if existing_data:
+                        # Extract the maximum chunk index to continue incrementing
+                        max_idx = 0
+                        for item in existing_data:
+                            if item.get("id", "").startswith("chunk_"):
+                                try:
+                                    idx = int(item["id"].split("_")[1])
+                                    max_idx = max(max_idx, idx)
+                                except ValueError:
+                                    pass
+                        start_idx = max_idx + 1
+            except Exception as e:
+                print(f"[Export] Could not load existing JSON for appending: {e}")
+
+        for idx, doc in enumerate(self.enriched_documents, start=start_idx):
             export_data.append({
                 "id": f"chunk_{idx}",
                 "content": doc.page_content,
@@ -554,12 +578,15 @@ class DocumentPipeline:
 
         # Save JSON
         os.makedirs(Path(json_path).parent, exist_ok=True)
+        final_data = existing_data + export_data if append else export_data
+        
         with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(export_data, f, indent=2, ensure_ascii=False)
-        print(f"[Export] Saved {len(export_data)} enriched chunks to '{json_path}'")
+            json.dump(final_data, f, indent=2, ensure_ascii=False)
+        print(f"[Export] Saved {len(export_data)} new chunks (Total: {len(final_data)}) to '{json_path}'")
 
         # Save JSONL
-        with open(jsonl_path, "w", encoding="utf-8") as f:
+        mode = "a" if append and os.path.exists(jsonl_path) else "w"
+        with open(jsonl_path, mode, encoding="utf-8") as f:
             for item in export_data:
                 f.write(json.dumps(item, ensure_ascii=False) + "\n")
         print(f"[Export] Saved {len(export_data)} enriched chunks to '{json_path}'")

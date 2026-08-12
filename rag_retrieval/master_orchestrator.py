@@ -15,16 +15,15 @@ from rag_retrieval.context_assembly import (
     ContextPackager
 )
 
-# 3. Cloud Reranking (NVIDIA)
-from langchain_nvidia_ai_endpoints import NVIDIARerank
+# 3. Cloud Reranking (NVIDIA) - REMOVED for speed optimization
 
 load_dotenv()
 
 class MasterRAGOrchestrator:
     def __init__(
         self,
-        hybrid_fetch_k: int = 20,
-        flashrank_top_n: int = 10,
+        hybrid_fetch_k: int = 10,
+        flashrank_top_n: int = 5,
         nvidia_top_n: int = 3
     ):
         print("\n--- Initializing Master RAG Orchestrator ---")
@@ -42,17 +41,10 @@ class MasterRAGOrchestrator:
         print("[2/5] Initializing Semantic Deduplicator...")
         self.deduplicator = SemanticDeduplicator()
         
-        print(f"[3/5] Initializing FlashRank (Local Reranker - Top {flashrank_top_n})...")
+        print(f"[3/4] Initializing FlashRank (Local Reranker - Top {flashrank_top_n})...")
         self.local_reranker = RelevanceReranker(top_n=flashrank_top_n)
         
-        print(f"[4/5] Initializing NVIDIA Cross-Encoder (Cloud Reranker - Top {nvidia_top_n})...")
-        self.cloud_reranker = NVIDIARerank(
-            model="nvidia/llama-nemotron-rerank-1b-v2",
-            api_key=self.api_key,
-            top_n=nvidia_top_n
-        )
-        
-        print("[5/5] Initializing Context Packager (LlamaIndex LongContextReorder)...")
+        print("[4/4] Initializing Context Packager (LlamaIndex LongContextReorder)...")
         self.packager = ContextPackager()
         
         print("Master RAG Orchestrator ready!\n")
@@ -87,20 +79,15 @@ class MasterRAGOrchestrator:
             return {"status": "SUCCESS", "context_string": "", "documents": []}
             
         # Step 3: Cascaded Reranking
-        print(f"\n=> Phase 3A: Local Reranking with FlashRank (Target: Top {self.flashrank_top_n})")
+        print(f"\n=> Phase 3: Local Reranking with FlashRank (Target: Top {self.flashrank_top_n})")
         t0 = time.time()
         flash_docs = self.local_reranker.rerank(docs=unique_docs, query=query)
-        print(f"   [Phase 3A] Completed in {time.time()-t0:.2f}s - {len(flash_docs)} documents advanced.")
-        
-        print(f"\n=> Phase 3B: Cloud Reranking with NVIDIA Cross-Encoder (Target: Top {self.nvidia_top_n})")
-        t0 = time.time()
-        final_reranked_docs = self.cloud_reranker.compress_documents(documents=flash_docs, query=query)
-        print(f"   [Phase 3B] Completed in {time.time()-t0:.2f}s - {len(final_reranked_docs)} extremely relevant documents selected.")
+        print(f"   [Phase 3] Completed in {time.time()-t0:.2f}s - {len(flash_docs)} documents advanced.")
         
         # Step 4: Context Packaging
         print(f"\n=> Phase 4: Context Packaging (Long-Context Reordering)")
         t0 = time.time()
-        packaged_docs = self.packager.package(final_reranked_docs)
+        packaged_docs = self.packager.package(flash_docs)
         print(f"   [Phase 4] Completed in {time.time()-t0:.2f}s - Documents reordered for optimal LLM consumption.")
         
         # Step 5: Output Generation

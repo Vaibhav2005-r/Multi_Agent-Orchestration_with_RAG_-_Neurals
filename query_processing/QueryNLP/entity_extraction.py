@@ -1,9 +1,8 @@
 import os
 from typing import List
 from pydantic import BaseModel, Field
+import re
 from dotenv import load_dotenv
-from langchain_nvidia_ai_endpoints import ChatNVIDIA
-from langchain_core.prompts import ChatPromptTemplate
 
 # Load environment variables (ensure NVIDIA_API_KEY is set in .env)
 load_dotenv()
@@ -26,47 +25,26 @@ class EntityExtractor:
     Useful for enriching semantic search or applying hard filters in Qdrant.
     """
     def __init__(self, model_name: str = "meta/llama-3.1-8b-instruct"):
-        self.api_key = os.environ.get("NVIDIA_API_KEY")
-        if not self.api_key:
-            raise ValueError("NVIDIA_API_KEY must be set in the environment variables.")
-        
-        # Initialize the ChatNVIDIA LLM
-        self.llm = ChatNVIDIA(
-            model=model_name,
-            api_key=self.api_key,
-            temperature=0.1,  # Low temperature for extraction reliability
-            max_completion_tokens=256
-        )
-        
-        # Bind the Pydantic schema to enforce structured JSON output
-        self.structured_llm = self.llm.with_structured_output(QueryEntities)
-        
-        # Define the extraction prompt
-        self.prompt = ChatPromptTemplate.from_messages([
-            (
-                "system",
-                "You are an expert financial data extraction assistant. "
-                "Your task is to extract all critical entities, organizations, acronyms, "
-                "regulations, and financial concepts from the user's query. "
-                "Return them as a strict list of strings. If no entities are present, return an empty list."
-            ),
-            ("user", "{query}")
-        ])
-        
-        # Create the extraction chain
-        self.chain = self.prompt | self.structured_llm
+        # Skipping LLM initialization for extreme low-latency performance
+        pass
 
     def extract(self, query: str) -> List[str]:
         """
-        Processes a user query and returns a deduplicated list of extracted entities
-        (max 15) to prevent token/API bloat.
+        Fast heuristic-based entity extraction (regex) instead of LLM 
+        to save ~2.0s in latency.
         """
         try:
-            result = self.chain.invoke({"query": query})
-            raw = result.entities if result and result.entities else []
-            # Deduplicate (case-insensitive) and cap at 15
+            # Find acronyms (2 or more uppercase letters)
+            acronyms = re.findall(r'\b[A-Z]{2,}\b', query)
+            # Find Title Case words
+            title_cases = re.findall(r'\b[A-Z][a-z]+\b', query)
+            
             seen, unique = set(), []
-            for e in raw:
+            # Stop words to ignore
+            stop_words = {"What", "Are", "The", "How", "Is", "Who", "Why", "When", "A", "An", "In", "On"}
+            for e in acronyms + title_cases:
+                if e in stop_words:
+                    continue
                 key = e.strip().lower()
                 if key and key not in seen:
                     seen.add(key)

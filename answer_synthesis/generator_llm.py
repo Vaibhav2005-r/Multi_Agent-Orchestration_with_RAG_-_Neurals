@@ -12,7 +12,7 @@ from answer_synthesis.post_processing import PostProcessor
 load_dotenv()
 
 class GeneratorLLM:
-    def __init__(self, model_name: str = "nvidia/nemotron-3-super-120b-a12b"):
+    def __init__(self, model_name: str = "meta/llama-3.1-8b-instruct"):
         """
         Initializes the Generator LLM module with the specified NVIDIA AI Endpoint model.
         """
@@ -83,10 +83,12 @@ class GeneratorLLM:
                 # Remove duplicates while preserving order
                 sources = list(dict.fromkeys(sources_found))
         
-        # 5. Generate Follow-up Suggestion
-        follow_up_prompt = f"Based on the following answer provided to the user, suggest exactly ONE brief, relevant follow-up question the user could ask next. Return ONLY the question.\n\nAnswer: {generated_answer}"
-        follow_up_response = self.llm.invoke([HumanMessage(content=follow_up_prompt)])
-        follow_up = follow_up_response.content.strip().strip('"\'')
+        # 5. Generate Rule-Based Follow-up Suggestion
+        entities = query_processing_result.get("entities", [])
+        if entities:
+            follow_up = f"Would you like to know more about {entities[0]}?"
+        else:
+            follow_up = "Do you have any other questions on this topic?"
         
         # 6. Format Final Output
         final_formatted_answer = self.post_processor.format_final_output(

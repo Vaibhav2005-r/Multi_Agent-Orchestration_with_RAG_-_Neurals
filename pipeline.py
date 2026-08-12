@@ -129,17 +129,14 @@ class MasterQueryPipeline:
     # ─────────────────────────────────────────────────────────────────
     def _run_security_check(
         self,
-        query_result: Dict[str, Any],
+        query: str,
         user_role: str
     ) -> Dict[str, Any]:
         """
-        Stage 2: Explicit security evaluation gate on the cleaned query.
+        Stage 2: Explicit security evaluation gate on the raw query.
         
-        The QueryOrchestrator already runs an implicit security check inside
-        QueryEnricher. This stage provides an additional explicit, standalone
-        security gate on the cleaned (spelling-corrected) query before RAG
-        retrieval, so the pipeline status is unambiguous.
-
+        Runs the security checks concurrently.
+        
         Returns a security result dict:
           { "status": "ALLOW" | "BLOCK", "query": <safe_query>, "reason": <if BLOCK> }
         """
@@ -148,24 +145,21 @@ class MasterQueryPipeline:
         print("─" * 60)
         t0 = time.time()
 
-        # Use the cleaned query (post-spelling-correction) as the input to security
-        cleaned_query = query_result.get("cleaned_query", query_result.get("original_query", ""))
-
-        print(f"  → Evaluating security for query: '{cleaned_query}' (Role: {user_role})")
+        print(f"  → Evaluating security for query: '{query}' (Role: {user_role})")
         security_result = self.security_orchestrator.evaluate_query(
-            query=cleaned_query,
+            query=query,
             user_role=user_role
         )
 
         status = security_result.get("status", "ALLOW")
-        safe_query = security_result.get("query", cleaned_query)
+        safe_query = security_result.get("query", query)
 
         if status == "BLOCK":
             reason = security_result.get("reason", "Unknown security violation.")
             print(f"\n  🚫 QUERY BLOCKED: {reason}")
         else:
             print(f"\n  ✅ Security check PASSED in {time.time()-t0:.2f}s")
-            if safe_query != cleaned_query:
+            if safe_query != query:
                 print(f"  ℹ️  Query sanitized (PII removed): '{safe_query}'")
 
         return {
@@ -266,11 +260,14 @@ class MasterQueryPipeline:
         print(f"  User Role: {user_role}")
         print("=" * 70)
 
-        # ── Stage 1: Query Processing ────────────────────────────────
-        query_result = self._run_query_processing(query, chat_history, user_role)
-
-        # ── Stage 2: Security Gate ───────────────────────────────────
-        security_result = self._run_security_check(query_result, user_role)
+        # ── Stages 1 & 2: Concurrent Query Processing and Security ───
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            future_query = executor.submit(self._run_query_processing, query, chat_history, user_role)
+            future_security = executor.submit(self._run_security_check, query, user_role)
+            
+            query_result = future_query.result()
+            security_result = future_security.result()
 
         if security_result["status"] == "BLOCK":
             total_time = time.time() - t_pipeline_start

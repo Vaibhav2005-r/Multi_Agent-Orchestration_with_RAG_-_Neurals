@@ -1,5 +1,7 @@
 import os
 import asyncio
+import concurrent.futures
+from typing import Dict, Any
 from typing import Dict, Any
 from dotenv import load_dotenv
 
@@ -66,17 +68,19 @@ class SecurityOrchestrator:
         Master evaluation pipeline.
         Returns a dict: {"status": "ALLOW" | "BLOCK", "query": <safe_query>, "reason": <reason_if_blocked>}
         """
-        # 1. Harmful Checks (Strict Blocks)
+        # 1. Harmful Checks (Strict Blocks) - Run Concurrently
         try:
-            # Check for Prompt Injections / Jailbreaks
-            self.prompt_injection_guard.evaluate_text_for_injection(query, "User Query")
-            
-            # Check for Content Safety / Toxicity
-            self.content_safety_guard.check_content_safety(query)
-            
-            # Check for Access Authorization
-            self.auth_guard.check_access(query, user_role)
-            
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+                # Submit all three checks
+                f_injection = executor.submit(self.prompt_injection_guard.evaluate_text_for_injection, query, "User Query")
+                f_safety = executor.submit(self.content_safety_guard.check_content_safety, query)
+                f_auth = executor.submit(self.auth_guard.check_access, query, user_role)
+                
+                # Wait for all to complete and raise exceptions if any failed
+                f_injection.result()
+                f_safety.result()
+                f_auth.result()
+                
         except ValueError as ve:
             # Any of the above raising ValueError means a HARD BLOCK.
             return {

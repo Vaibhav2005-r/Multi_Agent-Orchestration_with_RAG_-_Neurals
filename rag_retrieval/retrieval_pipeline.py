@@ -1,8 +1,9 @@
 """
 Hybrid RAG Retrieval Pipeline
 
-Executes a hybrid search (BM25 + Qdrant Dense Vectors) for a given query,
-protected by the SecurityOrchestrator. Supports metadata filtering (e.g. by time/source).
+Executes a hybrid search (BM25 + Qdrant Dense Vectors) for a given query.
+Security is handled UPSTREAM by SecurityOrchestrator in pipeline.py —
+do NOT run it again here.
 """
 
 import os
@@ -17,10 +18,7 @@ from langchain_nvidia_ai_endpoints import NVIDIAEmbeddings
 from langchain_community.retrievers import BM25Retriever
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import Filter, FieldCondition, MatchValue
-
-# Import security layer
-from SecurityLayer.security_orchestrator import SecurityOrchestrator
+from qdrant_client.models import Filter
 
 # Load environment variables
 load_dotenv()
@@ -36,15 +34,12 @@ class HybridRetrievalPipeline:
         self.api_key = os.environ.get("NVIDIA_API_KEY")
         if not self.api_key:
             raise ValueError("NVIDIA_API_KEY must be provided.")
-            
+
         self.collection_name = collection_name
         self.qdrant_path = qdrant_path
         self.json_path = json_path
-        
-        # 1. Initialize Security Orchestrator
-        self.security = SecurityOrchestrator()
-        
-        # 2. Initialize Qdrant Client and Vector Store
+
+        # 1. Initialize Qdrant Client and Vector Store
         print(f"Initializing Qdrant client at {self.qdrant_path}...")
         self.client = QdrantClient(path=self.qdrant_path)
         self.embeddings = NVIDIAEmbeddings(
@@ -57,11 +52,11 @@ class HybridRetrievalPipeline:
             collection_name=self.collection_name,
             embedding=self.embeddings,
         )
-        
-        # 3. Initialize BM25 Retriever from JSON
+
+        # 2. Initialize BM25 Retriever from JSON
         print(f"Loading documents from {self.json_path} for BM25...")
         self.bm25_retriever = self._build_bm25_retriever()
-        
+
         print("Hybrid Retrieval Pipeline Initialized Successfully.")
         
     def _build_bm25_retriever(self):
@@ -113,77 +108,51 @@ class HybridRetrievalPipeline:
         
     def retrieve(self, query: str, top_k: int = 2, qdrant_filter: Filter = None):
         """
-        Executes hybrid search guarded by SecurityOrchestrator.
+        Executes hybrid BM25 + Qdrant search on a pre-security-cleared query.
+        Security checks are performed upstream — do NOT repeat them here.
         """
-        print(f"\n[Security Check] Verifying query: '{query}'")
-        
-        # Process the query through the SecurityLayer first
-        security_result = self.security.evaluate_query(query, user_role="EMPLOYEE")
-        
-        if security_result["status"] == "BLOCK":
-            print(f"❌ Query BLOCKED by Security Layer: {security_result.get('reason', 'Unknown reason')}")
-            return None
-            
-        # If the query was modified (e.g. PII sanitized), use the sanitized version
-        safe_query = security_result["query"]
-        if safe_query != query:
-            print(f"⚠️ Query was sanitized. Using: '{safe_query}'")
-        else:
-            print("✅ Query allowed by Security Layer.")
-            
-        print(f"\n[Hybrid Search] Executing BM25 + Vector Search (Target: top {top_k})...")
-        
+        print(f"\n[Hybrid Search] Executing BM25 + Vector Search for: '{query}'")
+        print(f"  -> Target: top {top_k} results")
+
         # Configure the 'k' for underlying retrievers
-        self.bm25_retriever.k = top_k * 2 # Fetch more for fusion
-        
-        # Configure Qdrant with optional metadata filters (Time/Source)
+        self.bm25_retriever.k = top_k * 2  # Fetch more for fusion
+
+        # Configure Qdrant with optional metadata filters
         search_kwargs = {"k": top_k * 2}
         if qdrant_filter:
             search_kwargs["filter"] = qdrant_filter
             print(f"  -> Applied Qdrant Metadata Filter: {qdrant_filter}")
-            
+
         qdrant_retriever_configured = self.qdrant_retriever.as_retriever(
             search_kwargs=search_kwargs
         )
-        
+
         t0 = time.time()
-        
+
         # Fetch from both retrievers independently
-        bm25_results = self.bm25_retriever.invoke(safe_query)
-        qdrant_results = qdrant_retriever_configured.invoke(safe_query)
-        
+        bm25_results = self.bm25_retriever.invoke(query)
+        qdrant_results = qdrant_retriever_configured.invoke(query)
+
         # Custom Reciprocal Rank Fusion (RRF)
         rrf_score = {}
         doc_map = {}
-        
+
         for doc_list in [bm25_results, qdrant_results]:
             for rank, doc in enumerate(doc_list, 1):
-                # Use chunk_id or page_content as a unique identifier
                 doc_id = doc.metadata.get("chunk_id", hash(doc.page_content))
                 if doc_id not in rrf_score:
                     rrf_score[doc_id] = 0.0
                     doc_map[doc_id] = doc
-                rrf_score[doc_id] += 1.0 / (rank + 60) # RRF constant k=60
-                
+                rrf_score[doc_id] += 1.0 / (rank + 60)  # RRF constant k=60
+
         # Sort by RRF score descending
         sorted_docs = sorted(rrf_score.items(), key=lambda x: x[1], reverse=True)
         results = [doc_map[doc_id] for doc_id, _ in sorted_docs]
-        
+
         search_time = time.time() - t0
-        
-        # Limit to strictly top_k results globally
         final_results = results[:top_k]
-        
-        print(f"Search completed in {search_time:.2f} seconds. Found {len(final_results)} results.")
-        
-        # Fetching context of all other files
-        all_files_info = self._get_all_files_info()
-        print(f"\n[Global Context] Database contains {all_files_info['total_chunks']} indexed chunks across sources:")
-        for src in all_files_info['unique_sources'][:5]: # Print up to 5
-            print(f"  - {src}")
-        if len(all_files_info['unique_sources']) > 5:
-            print(f"  ... and {len(all_files_info['unique_sources']) - 5} more.")
-        
+        print(f"  -> Search completed in {search_time:.2f}s. Found {len(final_results)} results.")
+
         return final_results
 
 

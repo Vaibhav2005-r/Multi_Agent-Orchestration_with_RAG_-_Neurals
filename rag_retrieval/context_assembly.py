@@ -39,13 +39,10 @@ class SemanticDeduplicator:
         return unique
 
     def deduplicate(self, docs: List[Document]) -> List[Document]:
-        """Removes duplicate chunks: exact-match first, then semantic similarity."""
+        """Removes duplicate chunks using exact-match hashing (Semantic dedup skipped for speed)."""
         # 1. Fast hash dedup (zero API cost)
         docs = self._hash_dedup(docs)
-        if len(docs) <= 1:
-            return docs
-        # 2. Semantic similarity dedup via NVIDIA Embeddings
-        return self.filter.transform_documents(docs)
+        return docs
 
 
 class RelevanceReranker:

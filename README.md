@@ -44,60 +44,78 @@ The primary workhorse LLM used for structured data extraction and logical reason
 ## 📦 Module Usage & Architecture
 
 ```mermaid
-flowchart LR
-    %% Ingestion Pipeline
-    subgraph Data Ingestion
-        A[Data Directory PDFs / TXT] --> B[Document Loader]
+flowchart TD
+    %% ───── Ingestion Pipeline ─────
+    subgraph Ingestion ["⚡ Unified Data Ingestion  (ingestion_pipeline.py)"]
+        A["📁 Data/ (PDFs, TXTs)"] --> B[Document Loader]
         B --> C[Semantic Chunking]
-        C --> D[Granular Metadata Enrichment<br/>ChatNVIDIA.abatch throttled <= 40 RPM]
-        D --> E[Export JSON / JSONL Artifacts]
+        C --> D["LLM Metadata Enrichment\n(ChatNVIDIA · ≤ 40 RPM)"]
+        D --> E[Export JSON / JSONL]
         E --> F[(Qdrant Vector DB)]
     end
-    
-    %% Query Pipeline
-    subgraph Query Execution & RAG Orchestration
-        Q[User Query] --> MO[Master RAG Orchestrator]
-        MO --> HRP[Hybrid Retrieval Pipeline]
-        
-        HRP --> S[SecurityLayer Orchestrator:<br/>PII, Safety, Auth, Injection Checks]
-        S --> |Blocked| B1[Query Rejected]
-        
-        S --> |Allowed / Sanitized| H_Search[Hybrid Search:<br/>BM25 + Qdrant Vector Search]
-        H_Search --> |RRF Fusion: Top 20 Candidates| MO
-        
-        MO --> DEDUP[Semantic Deduplicator<br/>NVIDIA Embeddings Filter]
-        DEDUP --> |Unique Docs| FR[FlashRank Local Reranker]
-        FR --> |Top 10 Docs| NR[NVIDIA Cloud Reranker<br/>Cross-Encoder]
-        NR --> |Top 3 Docs| LCR[Context Packager<br/>LongContextReorder]
-        LCR --> |Reordered Docs| FA[Final String Assembly]
+
+    %% ───── Query Pipeline ─────
+    subgraph QueryProc ["🔍 Stage 1 — Query Processing  (query_processing/)"]
+        Q["👤 Raw User Query"] --> SP[Spelling Corrector\nLlama-3.1-70b]
+        SP --> ID[Intent Detector\nPyTorch BiLSTM RNN]
+        SP --> EX[Entity Extractor\nLlama-3.1-8b]
+        SP --> QE[Query Enricher\nSemantic Expansion]
     end
 
-    %% Synthesis Pipeline
-    subgraph Answer Synthesis
-        FA --> PC[Prompt Constructor:<br/>Tone & Instruction Injection]
-        PC --> GLLM[Generator LLM<br/>Nemotron-3-Super-120b]
-        GLLM --> PP[Post Processor:<br/>Fact Verification & Confidence Scoring]
-        PP --> |Hallucination Check & Follow-Up| OUT[Final Formatted Response]
+    subgraph Security ["🔐 Stage 2 — Security Layer  (SecurityLayer/)"]
+        SEC_IN[Cleaned Enriched Query] --> PIG[Prompt Injection Guard]
+        SEC_IN --> CSG[Content Safety Guard]
+        SEC_IN --> AAG[Access Auth Guard RBAC]
+        SEC_IN --> PII[PII Guardrail → LLM Rewrite]
+        PIG & CSG & AAG --> BLK["🚫 BLOCKED"]
+        PII --> ALW["✅ Safe / Sanitized Query"]
     end
+
+    subgraph RAG ["📚 Stage 3 — RAG Retrieval  (rag_retrieval/)"]
+        R1["Hybrid Search\nBM25 + Qdrant (Top 20)"] --> R2["Semantic Deduplicator\nNVIDIA Embeddings"]
+        R2 --> R3["FlashRank\nLocal Reranker (Top 10)"]
+        R3 --> R4["NVIDIA Cross-Encoder\nCloud Reranker (Top 3)"]
+        R4 --> R5["LongContextReorder\nContext Packager"]
+        R5 --> CTX[Context String + Source Docs]
+    end
+
+    subgraph Synthesis ["💡 Stage 4 — Answer Synthesis  (answer_synthesis/)"]
+        S1[Prompt Constructor] --> S2["Generator LLM\nNemotron-3-Super-120b"]
+        S2 --> S3["Post Processor\nHallucination Check"]
+        S3 --> S4["Citation Injection\n& Follow-up Generation"]
+        S4 --> ANS["📝 Final Formatted Answer"]
+    end
+
+    %% ───── Data Flow ─────
+    F -.->|"Vector index used at query time"| R1
+    QE --> SEC_IN
+    ALW --> R1
+    CTX --> S1
+    QueryProc -.->|"intent · entities · enriched_payload"| S1
 ```
 
 ### 🏗️ Detailed System Workflow Architecture
 
-The currently implemented orchestration pipeline seamlessly strings together several modules to execute a flawless context assembly process:
+All modules are now connected into a single, end-to-end pipeline exposed via **`pipeline.py`**:
 
-1. **Master RAG Orchestrator (`rag_retrieval/master_orchestrator.py`)**: The central nervous system of the RAG retrieval flow. It receives the raw user query and manages the entire lifecycle of the retrieval process.
-2. **Security & Guardrails (`SecurityLayer/`)**: The query is immediately passed into the `HybridRetrievalPipeline`, which first routes it through the `SecurityOrchestrator`. Using NVIDIA NeMo Guardrails, it scans for prompt injection attacks, toxic content, and strictly enforces Role-Based Access Control (RBAC). If Personally Identifiable Information (PII) is detected, it is immediately masked/sanitized via LLM rewriting.
-3. **Hybrid Fetching**: Once sanitized, the query executes a BM25 sparse keyword search alongside a Qdrant dense vector search. The results are fused using Reciprocal Rank Fusion (RRF) to pull a broad set of ~20 candidate chunks.
-4. **Semantic Deduplication**: Compares the cosine similarity of the candidates using the `llama-nemotron-embed` model and drops redundant overlapping text.
-5. **Cascaded Reranking**: 
-    *   Passes the remaining unique chunks through `FlashRank` (a lightning-fast local model) to narrow the pool down to the Top 10.
-    *   Passes those Top 10 to the heavyweight `NVIDIA Cloud Cross-Encoder`, which rigorously scores them and selects the absolute Top 3 most relevant chunks.
-6. **Context Packaging**: Feeds the Top 3 chunks into LlamaIndex's `LongContextReorder`. This mitigates the notorious "Lost in the Middle" LLM hallucination effect by placing the highest-scoring chunk at the very beginning of the prompt and the second-highest at the very end.
-7. **Final Assembly**: The orchestrator outputs a cleanly formatted string containing the perfectly curated context, ready for generation.
-8. **Answer Synthesis**: The `PromptConstructor` wraps the query and context with strict behavioral instructions (e.g., executive-level tone). The `GeneratorLLM` generates the response.
-9. **Post-Processing & Hallucination Guardrails**: The output is evaluated against the source context by a local Vectara Hallucination cross-encoder. It injects confidence scores, dynamically appends source citations, generates a follow-up question, and adds safety warnings if hallucinations are detected.
+1. **Query Processing (`query_processing/query_orchestrator.py`)**: The raw user query is first normalized (spelling correction via Llama-3.1-70b), classified by intent (PyTorch BiLSTM), enriched with extracted entities, and semantically expanded via LLM.
+2. **Security Gate (`SecurityLayer/security_orchestrator.py`)**: The cleaned query is independently evaluated against all four guards — Prompt Injection, Content Safety, RBAC Authorization, and PII Detection. Blocked queries return an immediate error response. PII-flagged queries are safely rewritten before proceeding.
+3. **RAG Retrieval (`rag_retrieval/master_orchestrator.py`)**: The security-cleared query executes a Hybrid Search (BM25 + Qdrant). Results are deduplicated, cascaded-reranked (FlashRank → NVIDIA Cross-Encoder), and reordered via `LongContextReorder` to defeat the "Lost in the Middle" effect.
+4. **Answer Synthesis (`answer_synthesis/generator_llm.py`)**: The `PromptConstructor` combines the enriched query metadata (intent, entities) and the curated context string into a structured prompt. The Generator LLM produces the response, which is then evaluated for hallucinations, citation-injected, and given a follow-up suggestion.
 
-*(Note: Standalone modules like `QueryNLP/` and `query_enrichment.py` exist in the repository for intent classification, entity extraction, and semantic expansion, and can be integrated into this flow in the future.)*
+### 🚀 End-to-End Query Pipeline (`pipeline.py`) — **Run Queries Here**
+*   **Usage**: `python pipeline.py --query "Your question here" --role EMPLOYEE`
+*   **Purpose**: The master query entry point that chains all four stages together:
+    1. **Stage 1 → Query Processing**: Normalizes, classifies intent, extracts entities, enriches semantically
+    2. **Stage 2 → Security Gate**: Blocks injections/toxic content, enforces RBAC, sanitizes PII
+    3. **Stage 3 → RAG Retrieval**: Hybrid search → deduplication → cascaded reranking → context packaging
+    4. **Stage 4 → Answer Synthesis**: Structured prompt → LLM generation → hallucination check → citation injection
+*   **Optional Flags**:
+    *   `--query "<text>"` or `-q`: The user query string (required)
+    *   `--role GUEST|EMPLOYEE|ADMIN` or `-r`: RBAC user role (default: `EMPLOYEE`)
+    *   `--history "<json>"`: JSON array of prior chat turns for context-aware retrieval
+
+---
 
 ### 1. ⚡ Unified Ingestion Pipeline (`ingestion_pipeline.py`) — **Start Here**
 *   **Usage**: Run `python ingestion_pipeline.py`

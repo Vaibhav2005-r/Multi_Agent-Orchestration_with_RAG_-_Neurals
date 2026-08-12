@@ -175,7 +175,7 @@ def run_query():
                     "status": retrieval_r.get("status", "UNKNOWN"),
                     "num_documents": len(retrieval_r.get("documents", [])),
                     "sources": list({
-                        doc.get("metadata", {}).get("source", "Unknown")
+                        doc.metadata.get("source", "Unknown")
                         for doc in retrieval_r.get("documents", [])
                     }) if retrieval_r.get("documents") else []
                 },
@@ -196,6 +196,6 @@ def run_query():
 if __name__ == "__main__":
     print("=" * 60)
     print("  Multi-Agent RAG — Flask API Server")
-    print("  http://localhost:5000")
-    print("=" * 60)
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    print("  http://localhost:8080")
+    print("============================================================")
+    app.run(host="0.0.0.0", port=8080, debug=False)

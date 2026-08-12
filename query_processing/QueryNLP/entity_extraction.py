@@ -58,12 +58,22 @@ class EntityExtractor:
 
     def extract(self, query: str) -> List[str]:
         """
-        Processes a user query and returns a list of extracted entities.
+        Processes a user query and returns a deduplicated list of extracted entities
+        (max 15) to prevent token/API bloat.
         """
         try:
             result = self.chain.invoke({"query": query})
-            # Ensure we return a list, even if result is somehow None
-            return result.entities if result and result.entities else []
+            raw = result.entities if result and result.entities else []
+            # Deduplicate (case-insensitive) and cap at 15
+            seen, unique = set(), []
+            for e in raw:
+                key = e.strip().lower()
+                if key and key not in seen:
+                    seen.add(key)
+                    unique.append(e.strip())
+                if len(unique) >= 15:
+                    break
+            return unique
         except Exception as e:
             print(f"Error during entity extraction: {e}")
             return []

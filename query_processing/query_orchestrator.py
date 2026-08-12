@@ -2,6 +2,7 @@ import os
 import json
 import torch
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, List
 
 # Local Modules
@@ -91,40 +92,57 @@ class QueryOrchestrator:
     def process(self, query: str, chat_history: List[Dict[str, str]] = None, user_role: str = "GUEST") -> Dict[str, Any]:
         """
         Executes the full NLP preprocessing and enrichment pipeline.
+        Intent detection and entity extraction run in parallel for speed.
         """
         print("==================================================")
         print(f"QUERY PROCESSING INITIATED: '{query}'")
         print("==================================================")
         t_start = time.time()
-        
-        # Step 1: Spelling Correction & Normalization
+
+        # Step 1: Spelling Correction & Normalization (must run first — others depend on it)
         t0 = time.time()
         cleaned_query = self.speller.process_query(query)
         print(f"   [Phase 1] Spelling Corrected in {time.time()-t0:.2f}s: '{cleaned_query}'")
-        
-        # Step 2: Intent Detection
+
+        # Steps 2 & 3: Intent Detection + Entity Extraction — run in PARALLEL
         t0 = time.time()
-        intent = self._predict_intent(cleaned_query)
-        print(f"   [Phase 2] Intent Classified in {time.time()-t0:.2f}s: '{intent}'")
-        
-        # Step 3: Entity Extraction
+        intent = "UNKNOWN_INTENT"
+        entities = []
+
+        def _run_intent():
+            return self._predict_intent(cleaned_query)
+
+        def _run_entities():
+            return self.entity_extractor.extract(cleaned_query)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_intent = executor.submit(_run_intent)
+            future_entities = executor.submit(_run_entities)
+            try:
+                intent = future_intent.result(timeout=15)
+            except Exception as e:
+                print(f"   [Phase 2] Intent detection failed: {e}")
+            try:
+                entities = future_entities.result(timeout=15)
+            except Exception as e:
+                print(f"   [Phase 3] Entity extraction failed: {e}")
+
+        print(f"   [Phase 2+3] Intent + Entities done in {time.time()-t0:.2f}s (parallel)")
+        print(f"             Intent: '{intent}' | Entities: {entities}")
+
+        # Step 4: Query Enrichment (security already handled upstream in pipeline.py)
+        # Use enrich_safe() to avoid running SecurityOrchestrator a second time.
         t0 = time.time()
-        entities = self.entity_extractor.extract(cleaned_query)
-        print(f"   [Phase 3] Entities Extracted in {time.time()-t0:.2f}s: {entities}")
-        
-        # Step 4: Security & Query Enrichment
-        t0 = time.time()
-        enriched_payload = self.enricher.enrich(
-            query=cleaned_query, 
-            chat_history=chat_history, 
-            user_role=user_role
+        enriched_payload = self.enricher.enrich_safe(
+            safe_query=cleaned_query,
+            chat_history=chat_history,
         )
         print(f"   [Phase 4] Query Enriched in {time.time()-t0:.2f}s")
-        
+
         print("==================================================")
         print(f"QUERY PROCESSING COMPLETED IN {time.time()-t_start:.2f}s")
         print("==================================================")
-        
+
         return {
             "original_query": query,
             "cleaned_query": cleaned_query,

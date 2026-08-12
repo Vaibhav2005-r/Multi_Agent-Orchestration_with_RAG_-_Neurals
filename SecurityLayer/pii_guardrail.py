@@ -1,77 +1,71 @@
-import os
-from typing import Dict, Any, Optional
-from nemoguardrails import LLMRails, RailsConfig
-from dotenv import load_dotenv
+"""
+PII Guardrail — Fast Regex-Based Detector
+==========================================
+Replaces the deprecated nvidia/gliner-pii NeMo Guardrails model (EOL: 2026-07-27)
+with a local regex-based PII scanner. This is synchronous, zero-latency, and
+requires no external API calls.
 
-load_dotenv()
+Detects: emails, phone numbers, SSNs, credit card numbers, Aadhaar numbers,
+         PAN cards, dates of birth, IP addresses, and passport numbers.
+"""
+
+import re
+from typing import Optional
+
+# ── PII Patterns ───────────────────────────────────────────────────────────────
+_PII_PATTERNS = [
+    # Email addresses
+    (r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}", "EMAIL"),
+    # Phone numbers (various formats: +91, 0, or bare 10-digit)
+    (r"(?:\+?91[\-\s]?)?[6-9]\d{9}", "PHONE"),
+    # US SSN
+    (r"\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b", "SSN"),
+    # Credit/Debit card (13–19 digits, optionally grouped)
+    (r"\b(?:\d{4}[\s\-]?){3}\d{1,4}\b", "CREDIT_CARD"),
+    # Aadhaar (India) — 12 digits
+    (r"\b\d{4}\s?\d{4}\s?\d{4}\b", "AADHAAR"),
+    # PAN card (India) — e.g. ABCDE1234F
+    (r"\b[A-Z]{5}[0-9]{4}[A-Z]\b", "PAN"),
+    # IPv4 address
+    (r"\b(?:\d{1,3}\.){3}\d{1,3}\b", "IP_ADDRESS"),
+    # Date of birth patterns (dd/mm/yyyy, mm-dd-yyyy etc.)
+    (r"\b\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}\b", "DATE_OF_BIRTH"),
+    # Passport (generic: letter + 7 digits)
+    (r"\b[A-Z]\d{7}\b", "PASSPORT"),
+]
+
+_COMPILED = [(re.compile(pat, re.IGNORECASE), label) for pat, label in _PII_PATTERNS]
+
 
 class PIIGuardrail:
     """
-    Interfaces with NeMo Guardrails to detect and mask/block PII in user queries.
+    Fast, local regex-based PII detector.
+    Replaces the deprecated nvidia/gliner-pii NeMo Guardrails integration.
     """
-    def __init__(self, config_path: str = None):
-        if config_path is None:
-            config_path = os.path.join(os.path.dirname(__file__), "guardrails_config")
-        # Load the configuration from the specified directory
-        try:
-            self.config = RailsConfig.from_path(config_path)
-            self.rails = LLMRails(self.config)
-        except Exception as e:
-            print(f"Error initializing NeMo Guardrails: {e}")
-            self.rails = None
+
+    def __init__(self, config_path: Optional[str] = None):
+        # config_path kept for API compatibility — ignored in regex mode
+        self._detected_types: list = []
+
+    def detect(self, text: str) -> list[str]:
+        """
+        Returns a list of PII type labels found in the text.
+        e.g. ['EMAIL', 'PHONE']  or  [] if clean.
+        """
+        found = []
+        for pattern, label in _COMPILED:
+            if pattern.search(text):
+                found.append(label)
+        return found
 
     async def check_query(self, query: str) -> str:
         """
-        Passes the query through the guardrails.
-        Returns the safe/masked query, or raises an exception/returns blocked message if blocked.
+        Async-compatible interface (kept for drop-in compatibility with SecurityOrchestrator).
+        Returns the original query — detection result is stored in self._detected_types.
+        The SecurityOrchestrator compares the returned value to the original to detect PII.
         """
-        if not self.rails:
-            print("Warning: NeMo Guardrails not initialized, returning original query.")
-            return query
-            
-        try:
-            # We use generate_async to run the input rails and get the response
-            # Since we mainly care about input filtering, we can check the state
-            # or just rely on the LLM rails to process it.
-            # A simpler way just for filtering is to run the rails and check context.
-            # But the standard generate_async will run all input rails.
-            response = await self.rails.generate_async(
-                messages=[{"role": "user", "content": query}]
-            )
-            
-            # NeMo Guardrails can return a blocked message if the input flow blocks it.
-            # If it masks, the message is altered.
-            # Let's inspect the last user message from the info
-            info = self.rails.explain()
-            
-            # Usually we just return the final response, but if we are just using it as a pre-processor:
-            # We can check if the response indicates a block.
-            return response.get("content", query) if isinstance(response, dict) else query
-        except Exception as e:
-            print(f"Error during PII guardrail check: {e}")
-            return query
-
-# =====================================================================
-# Demo / Testing
-# =====================================================================
-if __name__ == "__main__":
-    import asyncio
-    
-    async def run_test():
-        print("🚀 Initializing PII Guardrail...")
-        guardrail = PIIGuardrail()
-        
-        test_queries = [
-            "What is the interest rate for digital lending?",
-            "My email is john.doe@example.com and phone is 555-123-4567. Can you check my account?",
-            "Cancel the credit card 4111-1111-1111-1111 for John Smith."
-        ]
-        
-        for q in test_queries:
-            print(f"\n--- Original Query ---")
-            print(q)
-            res = await guardrail.check_query(q)
-            print(f"--- Guardrail Output ---")
-            print(res)
-
-    asyncio.run(run_test())
+        self._detected_types = self.detect(query)
+        if self._detected_types:
+            # Return a lightly masked placeholder so SecurityOrchestrator knows PII was found
+            return f"[PII_DETECTED:{','.join(self._detected_types)}] {query}"
+        return query

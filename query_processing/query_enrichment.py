@@ -6,9 +6,6 @@ from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
-import asyncio
-
-from SecurityLayer.security_orchestrator import SecurityOrchestrator
 
 # Load environment variables
 load_dotenv()
@@ -21,32 +18,36 @@ class EnrichedQuery(BaseModel):
 
 class QueryEnricher:
     """
-    Enriches user queries using chat history and semantic expansion via an LLM.
-    This prepares the query to be more effective for RAG retrieval.
+    Enriches a pre-vetted (security-cleared) query using chat history and semantic
+    expansion via an LLM. Security checks are performed upstream by SecurityOrchestrator
+    in pipeline.py — do NOT duplicate them here.
     """
+
+    # Minimum word count for a query to be considered "well-formed".
+    # Queries meeting this threshold skip the LLM enrichment call entirely.
+    _SIMPLE_QUERY_WORD_THRESHOLD = 6
+
     def __init__(self, model_name: str = "meta/llama-3.1-8b-instruct", temperature: float = 0.2):
         self.api_key = os.environ.get("NVIDIA_API_KEY")
         if not self.api_key:
             raise ValueError("NVIDIA_API_KEY must be set in the environment variables.")
-        
+
         self.llm = ChatNVIDIA(
             model=model_name,
             api_key=self.api_key,
-            temperature=temperature
+            temperature=temperature,
+            max_completion_tokens=256,   # Enrichment output is short; cap tokens
         )
-        
-        # Initialize unified Security Orchestrator
-        self.security_orchestrator = SecurityOrchestrator()
-        
+
         self.parser = JsonOutputParser(pydantic_object=EnrichedQuery)
-        
+
         self.prompt = ChatPromptTemplate.from_messages([
             (
                 "system",
                 "You are an expert search query enrichment module. Your goal is to rewrite user queries "
                 "to maximize their retrieval effectiveness in a RAG (Retrieval-Augmented Generation) system.\n"
                 "You will be given the current user query and the recent chat history (if any) for context.\n"
-                "Perform semantic expansion by adding related keywords, synonyms, and domain-specific terms.\n"
+                "Perform semantic expansion by adding ONLY the 5 most relevant keywords or synonyms.\n"
                 "Then, rewrite the query to be a comprehensive and standalone search query.\n\n"
                 "Output strictly in JSON format matching this schema:\n{format_instructions}"
             ),
@@ -55,60 +56,73 @@ class QueryEnricher:
                 "Chat History Context:\n{chat_history}\n\nOriginal Query: {query}\n\nEnrich the query:"
             )
         ]).partial(format_instructions=self.parser.get_format_instructions())
-        
+
         self.chain = self.prompt | self.llm | self.parser
         
     def format_chat_history(self, chat_history: List[Dict[str, str]]) -> str:
-        """
-        Formats the chat history into a string for the prompt.
-        Expects chat_history to be a list of dicts like:
-        [{'role': 'user', 'content': '...'}, {'role': 'assistant', 'content': '...'}]
-        """
+        """Formats chat history into a string for the prompt."""
         if not chat_history:
             return "No previous chat history."
-            
         formatted = []
-        for msg in chat_history:
+        for msg in chat_history[-6:]:  # Only use last 3 turns (6 messages) to keep prompt short
             role = msg.get("role", "unknown").capitalize()
             content = msg.get("content", "")
             formatted.append(f"{role}: {content}")
-            
         return "\n".join(formatted)
+
+    def _is_well_formed(self, query: str) -> bool:
+        """Returns True if query is long enough to skip LLM enrichment."""
+        words = [w for w in query.strip().split() if len(w) > 1]
+        return len(words) >= self._SIMPLE_QUERY_WORD_THRESHOLD
 
     def enrich(self, query: str, chat_history: Optional[List[Dict[str, str]]] = None, user_role: str = "GUEST") -> Dict:
         """
-        Takes a raw user query and chat history, and returns the enriched query payload.
+        Deprecated direct interface — use enrich_safe() instead.
+        Kept for backwards compatibility with standalone tests.
+        """
+        return self.enrich_safe(safe_query=query, chat_history=chat_history)
+
+    def enrich_safe(
+        self,
+        safe_query: str,
+        chat_history: Optional[List[Dict[str, str]]] = None
+    ) -> Dict:
+        """
+        Enriches a pre-vetted, security-cleared query.
+        Security checks must be performed BEFORE calling this method.
+
+        Short-circuit: if the query is already well-formed (>= 6 meaningful words
+        and no prior chat history), skip the expensive LLM call entirely.
         """
         history_str = self.format_chat_history(chat_history)
-        
-        print(f"Running Security Orchestrator for user role '{user_role}' on query: '{query}'")
-        security_result = self.security_orchestrator.evaluate_query(query, user_role=user_role)
-        
-        if security_result["status"] == "BLOCK":
-            print(f"Query Blocked: {security_result.get('reason')}")
+        has_history = bool(chat_history)
+
+        # ── Fast path: skip LLM for well-formed queries with no chat context ──
+        if self._is_well_formed(safe_query) and not has_history:
+            print(f"[Enrichment] Short-circuit: query is well-formed, skipping LLM call.")
             return {
-                "original_query": query,
+                "original_query": safe_query,
                 "semantic_expansion": [],
-                "rewritten_query": "Query not allowed. " + security_result.get('reason', '')
+                "rewritten_query": safe_query,
+                "query": safe_query,  # alias used by prompt_construction.py
             }
-            
-        # If allowed, use the potentially rewritten safe query
-        safe_query = security_result["query"]
-        
-        print(f"Enriching safe query: '{safe_query}'")
+
+        print(f"[Enrichment] Calling LLM enrichment for: '{safe_query}'")
         try:
             result = self.chain.invoke({
                 "query": safe_query,
                 "chat_history": history_str
             })
+            if isinstance(result, dict):
+                result["query"] = result.get("rewritten_query", safe_query)
             return result
         except Exception as e:
-            print(f"Error enriching query: {e}")
-            # Fallback
+            print(f"[Enrichment] LLM error: {e}. Falling back to original query.")
             return {
-                "original_query": query,
+                "original_query": safe_query,
                 "semantic_expansion": [],
-                "rewritten_query": query
+                "rewritten_query": safe_query,
+                "query": safe_query,
             }
 
 # =====================================================================

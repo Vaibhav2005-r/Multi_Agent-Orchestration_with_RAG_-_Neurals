@@ -23,12 +23,28 @@ class SemanticDeduplicator:
         self.api_key = os.environ.get("NVIDIA_API_KEY")
         self.embeddings = NVIDIAEmbeddings(model=embedding_model, api_key=self.api_key, truncate="END")
         self.filter = EmbeddingsRedundantFilter(
-            embeddings=self.embeddings, 
+            embeddings=self.embeddings,
             similarity_threshold=threshold
         )
-        
+
+    @staticmethod
+    def _hash_dedup(docs: List[Document]) -> List[Document]:
+        """Fast exact-text deduplication using content hash before embedding API call."""
+        seen, unique = set(), []
+        for doc in docs:
+            key = " ".join(doc.page_content.split())  # normalise whitespace
+            if key not in seen:
+                seen.add(key)
+                unique.append(doc)
+        return unique
+
     def deduplicate(self, docs: List[Document]) -> List[Document]:
-        """Removes duplicate chunks based on semantic similarity."""
+        """Removes duplicate chunks: exact-match first, then semantic similarity."""
+        # 1. Fast hash dedup (zero API cost)
+        docs = self._hash_dedup(docs)
+        if len(docs) <= 1:
+            return docs
+        # 2. Semantic similarity dedup via NVIDIA Embeddings
         return self.filter.transform_documents(docs)
 
 

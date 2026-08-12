@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { Send, MessageSquare } from 'lucide-react'
 import MessageBubble from '../components/Chat/MessageBubble'
 
-const API_BASE = 'http://localhost:5000/api'
+const API_BASE = 'http://localhost:8080/api'
 
 
 

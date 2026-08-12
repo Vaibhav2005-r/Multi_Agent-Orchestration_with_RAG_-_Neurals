@@ -99,14 +99,29 @@ The currently implemented orchestration pipeline seamlessly strings together sev
 
 *(Note: Standalone modules like `QueryNLP/` and `query_enrichment.py` exist in the repository for intent classification, entity extraction, and semantic expansion, and can be integrated into this flow in the future.)*
 
-### 1. Document Processing Pipeline (`document_pipeline.py`)
+### 1. ⚡ Unified Ingestion Pipeline (`ingestion_pipeline.py`) — **Start Here**
+*   **Usage**: Run `python ingestion_pipeline.py`
+*   **Purpose**: The single-entrypoint pipeline that orchestrates the entire data ingestion flow end-to-end:
+    1. Loads raw documents from `Data/`
+    2. Enriches them with LLM-generated metadata
+    3. Exports `processed_documents.json` and `.jsonl` to disk
+    4. **Immediately hands off** the enriched documents in-memory to the Qdrant Indexer (no JSON round-trip)
+    5. Indexes all chunks into the persistent Qdrant Vector Database
+    6. Runs a verification search to confirm everything is working
+*   **Optional Flags**:
+    *   `--data-dir <path>`: Override the data directory (default: `Data/`)
+    *   `--collection <name>`: Override the Qdrant collection name (default: `fintech_documents_optimized`)
+    *   `--qdrant-path <path>`: Override the Qdrant DB path (default: `Data/qdrant_db_optimized`)
+    *   `--skip-indexing`: Only run document processing and export, skip Qdrant indexing
+
+### 2. Document Processing Pipeline (`document_pipeline.py`) — Standalone
 *   **Usage**: Run `python3 document_pipeline.py`
 *   **Purpose**: Scans the `Data/` folder for PDFs and TXT files. It loads the text, determines semantic chunk boundaries, extracts structured metadata for every chunk, and saves the highly enriched artifacts to `processed_documents.json` and `processed_documents.jsonl`.
 *   **Note**: Features a custom asynchronous sliding-window rate limiter to guarantee API calls stay strictly under 40 RPM.
 
-### 2. Indexing Pipeline (`qdrant_indexer.py` & `indexing_pipeline.ipynb`)
-*   **Usage**: Run `python3 qdrant_indexer.py`
-*   **Purpose**: Bulk-inserts enriched chunks into a local persistent Qdrant Vector Database collection using dense vectors.
+### 3. Indexing Pipeline (`qdrant_indexer.py`) — Standalone
+*   **Usage**: Run `python3 qdrant_indexer.py` (reads from existing `processed_documents.json`)
+*   **Purpose**: Standalone bulk-inserts enriched chunks from a pre-existing JSON file into the local persistent Qdrant Vector Database collection using dense vectors.
 
 ### 3. Query Processing Pipeline (`query_processing/`)
 *   **Usage**: Run `python -m query_processing.query_orchestrator`

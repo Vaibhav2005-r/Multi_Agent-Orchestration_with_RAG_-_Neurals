@@ -94,13 +94,13 @@ The currently implemented orchestration pipeline seamlessly strings together sev
 *   **Usage**: Run `python3 qdrant_indexer.py`
 *   **Purpose**: Bulk-inserts enriched chunks into a local persistent Qdrant Vector Database collection using dense vectors.
 
-### 3. Query NLP & Security Pipeline (`QueryNLP/` & `SecurityLayer/`)
-*   **Usage**: Automatically invoked during the query pipeline via `SecurityOrchestrator` and `query_enrichment.py`.
-*   **Purpose**: Intercepts and enhances user queries before processing:
+### 3. Query Processing Pipeline (`query_processing/`)
+*   **Usage**: Run `python -m query_processing.query_orchestrator`
+*   **Purpose**: Intercepts and enhances user queries before processing using the `QueryOrchestrator`:
     *   **Intent Detection**: Routes the query based on classification via a PyTorch RNN.
-    *   **Spelling & Entity Extraction**: Normalizes text and pulls key terms.
+    *   **Spelling & Entity Extraction**: Normalizes text and pulls key terms (`query_processing/QueryNLP/`).
     *   **Security Guardrails**: Detects and masks sensitive PII, validates RBAC, blocks toxic inputs, and detects adversarial jailbreak attempts.
-    *   **Query Enrichment**: Expands the query semantically and factors in prior conversational chat history.
+    *   **Query Enrichment**: Expands the query semantically and factors in prior conversational chat history (`query_processing/query_enrichment.py`).
 
 ### 4. Master RAG Orchestrator (`rag_retrieval/master_orchestrator.py`)
 *   **Usage**: Run `python -m rag_retrieval.master_orchestrator`

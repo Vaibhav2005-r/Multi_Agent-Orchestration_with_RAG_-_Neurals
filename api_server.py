@@ -1,22 +1,25 @@
 """
 Flask API Server for Multi-Agent RAG Frontend
 ==============================================
-Exposes the MasterQueryPipeline as REST endpoints for the React frontend.
+Exposes the MasterQueryPipeline and Unified Ingestion Pipeline as REST endpoints.
 
 Endpoints:
-  GET  /api/health       — Health check
-  POST /api/query        — Run the full end-to-end query pipeline
-  GET  /api/pipeline-info — Static info about pipeline stages and models
-
-Usage:
-  pip install flask flask-cors
-  python api_server.py
+  GET  /api/health          — Health check
+  POST /api/query           — Run the full end-to-end query pipeline
+  GET  /api/pipeline-info    — Static info about pipeline stages and models
+  POST /api/upload          — Upload document files (.pdf, .txt, .md) to staging
+  POST /api/ingest          — Trigger the unified document + ingestion pipeline
+  GET  /api/ingest/status   — Get real-time status of the ingestion pipeline
+  GET  /api/documents       — List currently indexed documents and statistics
 """
 
 import os
 import sys
 import time
+import json
+import shutil
 import threading
+from pathlib import Path
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -36,13 +39,36 @@ CORS(app)  # Allow React dev server to call this API
 
 # ── Lazy-initialize the heavy pipeline once on first request ──────────
 _pipeline = None
+_pipeline_lock = threading.Lock()
 
-def get_pipeline():
+def get_pipeline(force_reload=False):
     global _pipeline
-    if _pipeline is None:
-        from pipeline import MasterQueryPipeline
-        _pipeline = MasterQueryPipeline()
+    with _pipeline_lock:
+        if _pipeline is None or force_reload:
+            from pipeline import MasterQueryPipeline
+            _pipeline = MasterQueryPipeline()
     return _pipeline
+
+
+# ── Ingestion Pipeline Live State ─────────────────────────────────────
+_ingestion_state = {
+    "status": "idle",             # "idle" | "running" | "completed" | "error"
+    "current_stage": None,
+    "stage_id": None,
+    "stage_index": 0,
+    "total_stages": 6,
+    "progress": 0,
+    "message": "Pipeline ready for document ingestion.",
+    "processed_files": [],
+    "chunks_count": 0,
+    "elapsed_seconds": 0,
+    "error": None
+}
+_state_lock = threading.Lock()
+
+def update_ingestion_state(**kwargs):
+    with _state_lock:
+        _ingestion_state.update(kwargs)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -54,7 +80,7 @@ def health():
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Pipeline Info (static metadata for the visualizer)
+# Pipeline Info (metadata for the visualizer)
 # ─────────────────────────────────────────────────────────────────────
 @app.route("/api/pipeline-info", methods=["GET"])
 def pipeline_info():
@@ -63,7 +89,7 @@ def pipeline_info():
             {
                 "id": "loader",
                 "name": "Document Loader",
-                "description": "Scans Data/ directory for PDFs & TXT files, extracts raw text using PyMuPDF.",
+                "description": "Scans uploaded files & Data/ directory for PDFs, TXTs & MDs, extracts raw text using PyMuPDF.",
                 "model": None,
                 "icon": "file-text"
             },
@@ -83,22 +109,22 @@ def pipeline_info():
             },
             {
                 "id": "export",
-                "name": "JSON/JSONL Export",
-                "description": "Exports all enriched chunks to processed_documents.json and .jsonl artifacts.",
+                "name": "JSON/JSONL Export & Append",
+                "description": "Exports and appends all enriched chunks to processed_documents.json and .jsonl artifacts.",
                 "model": None,
                 "icon": "download"
             },
             {
                 "id": "indexing",
                 "name": "Qdrant Vector Indexing",
-                "description": "Bulk-inserts enriched chunks as dense vectors into a persistent Qdrant collection.",
+                "description": "Bulk-inserts enriched chunks as dense vectors into the persistent Qdrant collection.",
                 "model": "nvidia/llama-nemotron-embed-1b-v2",
                 "icon": "database"
             },
             {
                 "id": "verification",
-                "name": "Verification Search",
-                "description": "Runs test queries against the freshly indexed collection to confirm retrieval quality.",
+                "name": "Verification Search & Reload",
+                "description": "Runs test queries to confirm retrieval quality and reloads active vector store into memory.",
                 "model": None,
                 "icon": "check-circle"
             }
@@ -134,6 +160,33 @@ def pipeline_info():
             }
         ]
     })
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Document Inventory Endpoint
+# ─────────────────────────────────────────────────────────────────────
+@app.route("/api/documents", methods=["GET"])
+def list_documents():
+    json_path = os.path.join(str(db_client.DATA_DIR), "processed_documents.json")
+    if not os.path.exists(json_path):
+        return jsonify({"total_chunks": 0, "sources": []})
+
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            docs = json.load(f)
+
+        sources = {}
+        for d in docs:
+            meta = d.get("metadata", {})
+            src = meta.get("filename") or meta.get("source") or "Unknown"
+            sources[src] = sources.get(src, 0) + 1
+
+        return jsonify({
+            "total_chunks": len(docs),
+            "sources": [{"filename": k, "chunks": v} for k, v in sources.items()]
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -200,53 +253,131 @@ def run_query():
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Data Ingestion Endpoints
+# Data Ingestion & Upload Endpoints
 # ─────────────────────────────────────────────────────────────────────
-def run_ingestion_background(skip_indexing):
-    from ingestion_pipeline import UnifiedIngestionPipeline
+def run_ingestion_background(skip_indexing=False, staging_dir="Data/upload_staging"):
     import asyncio
-    pipeline = UnifiedIngestionPipeline(data_dir="Data/upload_staging", skip_indexing=skip_indexing)
-    asyncio.run(pipeline.run())
-    
-    import shutil
-    if os.path.exists("Data/upload_staging"):
-        for file in os.listdir("Data/upload_staging"):
-            try:
-                shutil.move(os.path.join("Data/upload_staging", file), os.path.join("Data", file))
-            except Exception as e:
-                print(f"Error moving file {file}: {e}")
+    from ingestion_pipeline import UnifiedIngestionPipeline
+
+    update_ingestion_state(
+        status="running",
+        stage_id="loader",
+        current_stage="Document Loader",
+        stage_index=0,
+        total_stages=6,
+        progress=5,
+        message="Starting document loading and parsing...",
+        error=None
+    )
+
+    def on_progress(stage_id, stage_name, stage_idx, total_stages, message):
+        pct = int(((stage_idx + 1) / (total_stages + 1)) * 100)
+        update_ingestion_state(
+            stage_id=stage_id,
+            current_stage=stage_name,
+            stage_index=stage_idx,
+            total_stages=total_stages,
+            progress=pct,
+            message=message
+        )
+
+    try:
+        # If staging directory has files, ingest from staging
+        target_dir = staging_dir if os.path.exists(staging_dir) and os.listdir(staging_dir) else "Data"
+        pipeline = UnifiedIngestionPipeline(
+            data_dir=target_dir,
+            skip_indexing=skip_indexing,
+            progress_callback=on_progress
+        )
+
+        result = asyncio.run(pipeline.run())
+
+        # Move staged files to Data/ directory
+        if os.path.exists(staging_dir):
+            for filename in os.listdir(staging_dir):
+                src_path = os.path.join(staging_dir, filename)
+                dst_path = os.path.join("Data", filename)
+                try:
+                    if os.path.exists(dst_path):
+                        os.remove(dst_path)
+                    shutil.move(src_path, dst_path)
+                except Exception as e:
+                    print(f"Error archiving file {filename}: {e}")
+
+        # Reload in-memory query pipeline to immediately include new documents
+        get_pipeline(force_reload=True)
+
+        update_ingestion_state(
+            status="completed",
+            stage_id="completed",
+            current_stage="Completed",
+            stage_index=6,
+            progress=100,
+            message=f"Successfully ingested {result.get('chunks_count', 0)} chunks into vector store.",
+            chunks_count=result.get("chunks_count", 0),
+            processed_files=result.get("processed_files", []),
+            elapsed_seconds=result.get("elapsed_seconds", 0)
+        )
+
+    except Exception as e:
+        print(f"❌ Ingestion pipeline failed: {e}")
+        update_ingestion_state(
+            status="error",
+            error=str(e),
+            message=f"Pipeline error: {str(e)}"
+        )
 
 
 @app.route("/api/upload", methods=["POST"])
 def upload_files():
     if 'files' not in request.files:
-         return jsonify({"error": "No files uploaded."}), 400
-    
+        return jsonify({"error": "No files uploaded."}), 400
+
     files = request.files.getlist('files')
+    if not files or all(f.filename == '' for f in files):
+        return jsonify({"error": "No files selected."}), 400
+
     saved_files = []
-    
-    os.makedirs("Data/upload_staging", exist_ok=True)
-    
+    staging_dir = os.path.join(str(db_client.DATA_DIR), "upload_staging")
+    os.makedirs(staging_dir, exist_ok=True)
+
     from werkzeug.utils import secure_filename
     for file in files:
         if file.filename:
             filename = secure_filename(file.filename)
-            file.save(os.path.join("Data/upload_staging", filename))
+            file.save(os.path.join(staging_dir, filename))
             saved_files.append(filename)
-            
-    return jsonify({"status": "success", "message": f"{len(saved_files)} files uploaded successfully.", "files": saved_files})
+
+    return jsonify({
+        "status": "success",
+        "message": f"{len(saved_files)} file(s) staged successfully for combined ingestion.",
+        "files": saved_files
+    })
 
 
 @app.route("/api/ingest", methods=["POST"])
 def trigger_ingestion():
+    with _state_lock:
+        if _ingestion_state["status"] == "running":
+            return jsonify({"status": "busy", "message": "An ingestion pipeline is already running."}), 409
+
     data = request.get_json(force=True, silent=True) or {}
     skip_indexing = data.get("skip_indexing", False)
-    
+
     thread = threading.Thread(target=run_ingestion_background, args=(skip_indexing,))
     thread.daemon = True
     thread.start()
-    
-    return jsonify({"status": "started", "message": "Ingestion pipeline started in background."})
+
+    return jsonify({
+        "status": "started",
+        "message": "Combined End-to-End Ingestion Pipeline started in background."
+    })
+
+
+@app.route("/api/ingest/status", methods=["GET"])
+def get_ingest_status():
+    with _state_lock:
+        return jsonify(dict(_ingestion_state))
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -257,4 +388,4 @@ if __name__ == "__main__":
     print("  Multi-Agent RAG — Flask API Server")
     print("  http://localhost:8080")
     print("============================================================")
-    app.run(host="0.0.0.0", port=8080, debug=True)
+    app.run(host="0.0.0.0", port=8080, debug=False)

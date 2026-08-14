@@ -117,29 +117,24 @@ All modules are now connected into a single, end-to-end pipeline exposed via **`
 
 ---
 
-### 1. ⚡ Unified Ingestion Pipeline (`ingestion_pipeline.py`) — **Start Here**
-*   **Usage**: Run `python ingestion_pipeline.py`
-*   **Purpose**: The single-entrypoint pipeline that orchestrates the entire data ingestion flow end-to-end:
-    1. Loads raw documents from `Data/`
-    2. Enriches them with LLM-generated metadata
-    3. Exports `processed_documents.json` and `.jsonl` to disk
-    4. **Immediately hands off** the enriched documents in-memory to the Qdrant Indexer (no JSON round-trip)
-    5. Indexes all chunks into the persistent Qdrant Vector Database
-    6. Runs a verification search to confirm everything is working
+### 1. ⚡ Unified End-to-End Ingestion Pipeline (`ingestion_pipeline.py`) — **Recommended**
+*   **Usage**: Run `python ingestion_pipeline.py` or use the **Pipeline Visualizer** in the web UI.
+*   **Purpose**: Combines document parsing, semantic chunking, LLM enrichment, artifact export, Qdrant vector indexing, and verification into a single automated pipeline:
+    1. **Document Loading**: Scans & parses PDFs, TXTs, and MD files using PyMuPDF.
+    2. **Semantic Chunking**: Identifies semantic boundaries using `nvidia/nv-embedqa-e5-v5` sentence embeddings.
+    3. **LLM Metadata Enrichment**: Extracts titles, summaries, entities, QA pairs, and compliance mandates via `meta/llama-3.1-8b-instruct` (≤ 40 RPM rate-limited).
+    4. **Artifact Export & Append**: Saves and appends new enriched chunks to `Data/processed_documents.json` and `.jsonl`.
+    5. **Qdrant Vector Indexing**: In-memory direct handoff embeds and indexes chunks as dense vectors into the persistent Qdrant collection (`fintech_documents`).
+    6. **Verification Search & Live Reload**: Runs automated verification search and reloads active in-memory retriever so new documents are immediately queryable in Chat.
 *   **Optional Flags**:
     *   `--data-dir <path>`: Override the data directory (default: `Data/`)
-    *   `--collection <name>`: Override the Qdrant collection name (default: `fintech_documents_optimized`)
-    *   `--qdrant-path <path>`: Override the Qdrant DB path (default: `Data/qdrant_db_optimized`)
+    *   `--collection <name>`: Override the Qdrant collection name (default: `fintech_documents`)
+    *   `--qdrant-path <path>`: Override the Qdrant DB path (default: `Data/qdrant_db`)
     *   `--skip-indexing`: Only run document processing and export, skip Qdrant indexing
 
-### 2. Document Processing Pipeline (`document_pipeline.py`) — Standalone
-*   **Usage**: Run `python3 document_pipeline.py`
-*   **Purpose**: Scans the `Data/` folder for PDFs and TXT files. It loads the text, determines semantic chunk boundaries, extracts structured metadata for every chunk, and saves the highly enriched artifacts to `processed_documents.json` and `processed_documents.jsonl`.
-*   **Note**: Features a custom asynchronous sliding-window rate limiter to guarantee API calls stay strictly under 40 RPM.
-
-### 3. Indexing Pipeline (`qdrant_indexer.py`) — Standalone
-*   **Usage**: Run `python3 qdrant_indexer.py` (reads from existing `processed_documents.json`)
-*   **Purpose**: Standalone bulk-inserts enriched chunks from a pre-existing JSON file into the local persistent Qdrant Vector Database collection using dense vectors.
+### 2. Standalone Processing Modules
+*   **`document_pipeline.py`**: Standalone document loader, chunker, and LLM metadata enricher.
+*   **`qdrant_indexer.py`**: Standalone bulk-indexer from existing `processed_documents.json` into Qdrant.
 
 ### 3. Query Processing Pipeline (`query_processing/`)
 *   **Usage**: Run `python -m query_processing.query_orchestrator`

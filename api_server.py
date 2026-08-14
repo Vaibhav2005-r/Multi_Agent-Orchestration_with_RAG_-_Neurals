@@ -19,8 +19,16 @@ import time
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
+import db_client  # Enforces cross-platform path resolution and UTF-8 output
 
 load_dotenv()
+
+# UTF-8 Stream Reconfiguration for Windows
+if sys.platform == "win32":
+    if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 app = Flask(__name__)
 CORS(app)  # Allow React dev server to call this API

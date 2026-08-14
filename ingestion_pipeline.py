@@ -23,9 +23,17 @@ from typing import List, Optional
 
 from dotenv import load_dotenv
 from langchain_core.documents import Document
+from db_client import DEFAULT_QDRANT_PATH, DEFAULT_COLLECTION, DATA_DIR
 
 # Load env first
 load_dotenv()
+
+# UTF-8 Stream Reconfiguration for Windows
+if sys.platform == "win32":
+    if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 # =====================================================================
 # Inline import of both pipeline modules
@@ -47,9 +55,9 @@ class UnifiedIngestionPipeline:
 
     def __init__(
         self,
-        data_dir: str = "Data",
-        qdrant_path: str = "Data/qdrant_db_optimized",
-        collection_name: str = "fintech_documents_optimized",
+        data_dir: str = str(DATA_DIR),
+        qdrant_path: str = DEFAULT_QDRANT_PATH,
+        collection_name: str = DEFAULT_COLLECTION,
         embedding_model: str = "nvidia/llama-nemotron-embed-1b-v2",
         batch_size: int = 100,
         skip_indexing: bool = False

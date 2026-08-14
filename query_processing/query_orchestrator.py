@@ -5,6 +5,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, List
 
+from pathlib import Path
+
 # Local Modules
 from query_processing.QueryNLP.spelling_correction import QuerySpellingCorrector
 from query_processing.QueryNLP.entity_extraction import EntityExtractor
@@ -13,6 +15,7 @@ from query_processing.query_enrichment import QueryEnricher
 # Intent Detection requires the model definition to load weights
 from query_processing.QueryNLP.intent_detection import IntentDetectionModel, MAX_LEN, MODEL_NAME
 from transformers import AutoTokenizer
+from db_client import BASE_DIR
 
 class QueryOrchestrator:
     """
@@ -44,14 +47,14 @@ class QueryOrchestrator:
         
     def _load_intent_model(self):
         """Loads the pre-trained intent detection model if available."""
-        model_path = "models/intent_detection_rnn.pt"
-        class_path = "models/intent_classes.json"
+        model_path = str(BASE_DIR / "models" / "intent_detection_rnn.pt")
+        class_path = str(BASE_DIR / "models" / "intent_classes.json")
         
         if not os.path.exists(model_path) or not os.path.exists(class_path):
-            print("⚠️ Intent detection model not found. Intent classification will be skipped.")
+            print("ℹ️ Intent detection model not found at models/. Intent classification will fall back to default.")
             return None, None, None
             
-        with open(class_path, "r") as f:
+        with open(class_path, "r", encoding="utf-8") as f:
             idx_to_class = json.load(f)
             
         num_classes = len(idx_to_class)

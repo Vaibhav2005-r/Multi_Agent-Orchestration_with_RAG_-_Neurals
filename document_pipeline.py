@@ -10,6 +10,7 @@ Pipeline Workflow:
 """
 
 import os
+import sys
 import glob
 import json
 import time
@@ -31,6 +32,13 @@ from langchain_experimental.text_splitter import SemanticChunker
 
 # Load environment variables
 load_dotenv()
+
+# UTF-8 Stream Reconfiguration for Windows
+if sys.platform == "win32":
+    if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
 # =====================================================================

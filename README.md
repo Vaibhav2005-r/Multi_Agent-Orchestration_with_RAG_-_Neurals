@@ -167,20 +167,59 @@ All modules are now connected into a single, end-to-end pipeline exposed via **`
 
 ---
 
-## 🚀 Setup & Installation
+## 🚀 Setup & Installation (Cross-Platform)
 
-### 1. Clone & Install Dependencies
+### 1. Clone & Install Python Dependencies
 ```bash
 git clone https://github.com/Vaibhav2005-r/Multi_Agent-Orchestration_with_RAG_-_Neurals.git
 cd Multi_Agent-Orchestration_with_RAG_-_Neurals
-pip install langchain-nvidia-ai-endpoints langchain-core langchain-qdrant qdrant-client pypdf pymupdf python-dotenv pandas torch transformers nemoguardrails nest_asyncio flashrank llama-index-core
-```
-> **Note for Windows Users:** The `nemoguardrails` dependency requires [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) to be installed.
 
-### 2. Configure Environment Variables
-Create a `.env` file in the root directory and add your API key from [build.nvidia.com](https://build.nvidia.com):
+# (Optional) Create and activate virtual environment
+# Windows:
+python -m venv venv
+venv\Scripts\activate
+
+# macOS / Linux:
+python3 -m venv venv
+source venv/bin/activate
+
+# Install all cross-platform requirements
+pip install -r requirements.txt
+```
+
+### 2. Frontend Dependencies
+```bash
+cd frontend
+npm install
+cd ..
+```
+
+### 3. Configure Environment Variables
+Create a `.env` file in the root directory and add your NVIDIA API key from [build.nvidia.com](https://build.nvidia.com):
 ```env
 NVIDIA_API_KEY=nvapi-your_api_key_here
+PYTHONUTF8=1
+```
+
+### 4. Running the System
+
+#### Option A: 1-Click Launchers (Backend + Frontend)
+* **Windows**: Double-click `start_all.bat`
+* **macOS / Linux**: Run `./start_all.sh`
+
+#### Option B: Standalone CLI Pipeline
+```bash
+python pipeline.py --query "What are the rules regarding loan disbursals?"
+```
+
+#### Option C: API Server & Web UI
+```bash
+# Terminal 1: Start Flask API (Windows: run_api.bat | macOS/Linux: ./run_api.sh)
+python api_server.py
+
+# Terminal 2: Start React Frontend
+cd frontend
+npm run dev
 ```
 
 ---

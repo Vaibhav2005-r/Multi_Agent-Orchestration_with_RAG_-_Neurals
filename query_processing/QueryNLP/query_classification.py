@@ -50,6 +50,11 @@ class QueryClassifier:
     def __init__(self, model_dir: str = "models", base_model: str = "distilbert-base-uncased"):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
         
+        # Resolve path relative to current or project base
+        if not os.path.isabs(model_dir):
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            model_dir = os.path.join(base_dir, model_dir)
+            
         classes_path = os.path.join(model_dir, "intent_classes.json")
         weights_path = os.path.join(model_dir, "intent_detection_rnn.pt")
         
@@ -57,7 +62,7 @@ class QueryClassifier:
             raise FileNotFoundError(f"Model files not found in '{model_dir}'. Run intent_detection.py first.")
             
         # Load intent mapping
-        with open(classes_path, "r") as f:
+        with open(classes_path, "r", encoding="utf-8") as f:
             self.idx_to_class = json.load(f)
         self.num_classes = len(self.idx_to_class)
         

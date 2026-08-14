@@ -12,10 +12,10 @@ from pathlib import Path
 from typing import List, Dict, Any
 
 from dotenv import load_dotenv
-from qdrant_client import QdrantClient
 from langchain_core.documents import Document
 from langchain_qdrant import QdrantVectorStore
 from langchain_nvidia_ai_endpoints import NVIDIAEmbeddings
+from db_client import get_qdrant_client, DEFAULT_QDRANT_PATH, DEFAULT_JSON_PATH, DEFAULT_COLLECTION
 
 # Load environment variables
 load_dotenv()
@@ -23,9 +23,9 @@ load_dotenv()
 class QdrantIndexer:
     def __init__(
         self,
-        collection_name: str = "fintech_documents",
+        collection_name: str = DEFAULT_COLLECTION,
         embedding_model: str = "nvidia/llama-nemotron-embed-1b-v2",
-        qdrant_path: str = "Data/qdrant_db",
+        qdrant_path: str = DEFAULT_QDRANT_PATH,
         batch_size: int = 100
     ):
         self.api_key = os.environ.get("NVIDIA_API_KEY")
@@ -33,7 +33,7 @@ class QdrantIndexer:
             raise ValueError("NVIDIA_API_KEY must be provided or set in environment variables.")
 
         self.collection_name = collection_name
-        self.qdrant_path = qdrant_path
+        self.qdrant_path = os.path.abspath(qdrant_path)
         self.embedding_model = embedding_model
         self.batch_size = batch_size
 
@@ -47,11 +47,11 @@ class QdrantIndexer:
         # Ensure qdrant path exists
         os.makedirs(self.qdrant_path, exist_ok=True)
         print(f"Initializing local Qdrant Client at: {self.qdrant_path}")
-        self.client = QdrantClient(path=self.qdrant_path)
+        self.client = get_qdrant_client(self.qdrant_path)
 
         self.vector_store = None
 
-    def load_documents(self, json_path: str = "Data/processed_documents.json") -> List[Document]:
+    def load_documents(self, json_path: str = DEFAULT_JSON_PATH) -> List[Document]:
         """Loads enriched documents from the pipeline output."""
         print(f"\n[1/3] Loading enriched documents from '{json_path}'...")
         if not os.path.exists(json_path):

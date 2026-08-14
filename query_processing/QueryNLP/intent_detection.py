@@ -155,7 +155,7 @@ if __name__ == "__main__":
     print("Model saved to models/intent_detection_rnn.pt")
     
     # Save the label mapping for inference
-    with open("models/intent_classes.json", "w") as f:
-        json.dump({v: k for k, v in class_to_idx.items()}, f)
+    with open("models/intent_classes.json", "w", encoding="utf-8") as f:
+        json.dump({v: k for k, v in class_to_idx.items()}, f, indent=2, ensure_ascii=False)
     print("Intent class mapping saved to models/intent_classes.json")
 

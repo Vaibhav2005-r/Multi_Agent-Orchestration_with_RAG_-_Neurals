@@ -4,7 +4,6 @@ import time
 from typing import List, Dict, Any
 
 from dotenv import load_dotenv
-from qdrant_client import QdrantClient
 from qdrant_client.models import (
     VectorParams, 
     Distance, 
@@ -16,6 +15,7 @@ from qdrant_client.models import (
 from langchain_core.documents import Document
 from langchain_qdrant import QdrantVectorStore
 from langchain_nvidia_ai_endpoints import NVIDIAEmbeddings
+from db_client import get_qdrant_client, DEFAULT_JSON_PATH
 
 # Load environment variables
 load_dotenv()
@@ -33,7 +33,7 @@ class OptimizedVectorSearch:
             raise ValueError("NVIDIA_API_KEY must be provided or set in environment variables.")
 
         self.collection_name = collection_name
-        self.qdrant_path = qdrant_path
+        self.qdrant_path = os.path.abspath(qdrant_path)
         self.embedding_model = embedding_model
         self.batch_size = batch_size
 
@@ -47,11 +47,11 @@ class OptimizedVectorSearch:
         # Ensure qdrant path exists
         os.makedirs(self.qdrant_path, exist_ok=True)
         print(f"Initializing local Qdrant Client at: {self.qdrant_path}")
-        self.client = QdrantClient(path=self.qdrant_path)
+        self.client = get_qdrant_client(self.qdrant_path)
 
         self.vector_store = None
 
-    def load_documents(self, json_path: str = "Data/processed_documents.json") -> List[Document]:
+    def load_documents(self, json_path: str = DEFAULT_JSON_PATH) -> List[Document]:
         """Loads enriched documents from the pipeline output."""
         print(f"\nLoading enriched documents from '{json_path}'...")
         if not os.path.exists(json_path):

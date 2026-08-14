@@ -83,12 +83,32 @@ class GeneratorLLM:
                 # Remove duplicates while preserving order
                 sources = list(dict.fromkeys(sources_found))
         
-        # 5. Generate Rule-Based Follow-up Suggestion
-        entities = query_processing_result.get("entities", [])
-        if entities:
-            follow_up = f"Would you like to know more about {entities[0]}?"
-        else:
-            follow_up = "Do you have any other questions on this topic?"
+        # 5. Generate Context-Aware Substantive Follow-up Questions
+        suggested_followups = []
+        user_query_clean = query_processing_result.get("original_query", "").lower()
+        
+        retrieved_docs = retrieval_result.get("documents", [])
+        for doc in retrieved_docs:
+            if hasattr(doc, "metadata"):
+                p_questions = doc.metadata.get("potential_questions", []) or doc.metadata.get("potential_qa", [])
+                for pq in p_questions:
+                    pq_text = pq if isinstance(pq, str) else pq.get("question", "")
+                    if pq_text and pq_text not in suggested_followups:
+                        # Avoid repeating the exact query
+                        if pq_text.lower().strip(" ?") != user_query_clean.strip(" ?"):
+                            suggested_followups.append(pq_text)
+                            if len(suggested_followups) >= 2:
+                                break
+            if len(suggested_followups) >= 2:
+                break
+        
+        # Fallback if no questions in metadata
+        if not suggested_followups:
+            entities = query_processing_result.get("entities", [])
+            entity_str = " ".join(entities) if entities else "these regulatory guidelines"
+            suggested_followups = [f"What are the key compliance mandates and reporting requirements for {entity_str}?"]
+        
+        follow_up = " | ".join(suggested_followups)
         
         # 6. Format Final Output
         final_formatted_answer = self.post_processor.format_final_output(

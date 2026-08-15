@@ -92,7 +92,7 @@ class QueryOrchestrator:
             
         return self.intent_classes.get(str(pred_idx), "UNKNOWN_INTENT")
         
-    def process(self, query: str, chat_history: List[Dict[str, str]] = None, user_role: str = "GUEST") -> Dict[str, Any]:
+    def process(self, query: str, chat_history: List[Dict[str, str]] = None, user_role: str = "EMPLOYEE") -> Dict[str, Any]:
         """
         Executes the full NLP preprocessing and enrichment pipeline.
         Intent detection and entity extraction run in parallel for speed.

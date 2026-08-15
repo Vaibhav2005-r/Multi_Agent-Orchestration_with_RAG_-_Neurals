@@ -75,7 +75,7 @@ class QueryEnricher:
         words = [w for w in query.strip().split() if len(w) > 1]
         return len(words) >= self._SIMPLE_QUERY_WORD_THRESHOLD
 
-    def enrich(self, query: str, chat_history: Optional[List[Dict[str, str]]] = None, user_role: str = "GUEST") -> Dict:
+    def enrich(self, query: str, chat_history: Optional[List[Dict[str, str]]] = None, user_role: str = "EMPLOYEE") -> Dict:
         """
         Deprecated direct interface — use enrich_safe() instead.
         Kept for backwards compatibility with standalone tests.

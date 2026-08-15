@@ -112,7 +112,7 @@ All modules are now connected into a single, end-to-end pipeline exposed via **`
     4. **Stage 4 → Answer Synthesis**: Structured prompt → LLM generation → hallucination check → citation injection
 *   **Optional Flags**:
     *   `--query "<text>"` or `-q`: The user query string (required)
-    *   `--role GUEST|EMPLOYEE|ADMIN` or `-r`: RBAC user role (default: `EMPLOYEE`)
+    *   `--role EMPLOYEE|ADMIN` or `-r`: RBAC user role (default: `EMPLOYEE`)
     *   `--history "<json>"`: JSON array of prior chat turns for context-aware retrieval
 
 ---

@@ -160,7 +160,6 @@ export default function ChatPage() {
               value={role}
               onChange={e => setRole(e.target.value)}
             >
-              <option value="GUEST">GUEST</option>
               <option value="EMPLOYEE">EMPLOYEE</option>
               <option value="ADMIN">ADMIN</option>
             </select>

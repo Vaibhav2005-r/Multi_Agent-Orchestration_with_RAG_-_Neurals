@@ -196,14 +196,14 @@ def list_documents():
 def run_query():
     data = request.get_json(force=True)
     query = data.get("query", "").strip()
-    role = data.get("role", "GUEST").upper()
+    role = data.get("role", "EMPLOYEE").upper()
     chat_history = data.get("chat_history", [])
 
     if not query:
         return jsonify({"error": "Query cannot be empty."}), 400
 
-    if role not in ("GUEST", "EMPLOYEE", "ADMIN"):
-        role = "GUEST"
+    if role not in ("EMPLOYEE", "ADMIN"):
+        role = "EMPLOYEE"
 
     try:
         pipeline = get_pipeline()

@@ -11,14 +11,13 @@ class AccessAuthorizationGuard:
     """
     Uses an LLM to dynamically determine the required role for a given query,
     and checks if the provided user role meets or exceeds that requirement.
+    Supported roles: EMPLOYEE, ADMIN.
     """
     
     # Role hierarchy: Higher number = Higher privilege
     ROLE_HIERARCHY: Dict[str, int] = {
-        "GUEST": 1,
-        "EMPLOYEE": 2,
-        "MANAGER": 3,
-        "ADMIN": 4
+        "EMPLOYEE": 1,
+        "ADMIN": 2
     }
     
     def __init__(self, model_name: str = "meta/llama-3.1-8b-instruct"):
@@ -35,15 +34,13 @@ class AccessAuthorizationGuard:
         # Build the chain to determine required role
         prompt = ChatPromptTemplate.from_template("""
         You are a Data Security Classifier. Your job is to determine the MINIMUM access role required to view information based on a user's query.
-        The roles are hierarchical, from lowest to highest: GUEST, EMPLOYEE, MANAGER, ADMIN.
+        The roles are hierarchical, from lowest to highest: EMPLOYEE, ADMIN.
         
         Guidelines:
-        - GUEST: Publicly available information, general company info, public products.
-        - EMPLOYEE: Internal policies, standard procedures, non-sensitive operational data.
-        - MANAGER: Department budgets, strategic plans, team performance data, vendor contracts.
-        - ADMIN: Highly sensitive data, private payroll, mergers & acquisitions, PII, system configurations.
+        - EMPLOYEE: Standard operational inquiries, public regulations, compliance guidelines, RBI circulars, internal policies, standard procedures, documentation, and non-sensitive business data.
+        - ADMIN: Highly sensitive data, private payroll details, executive compensation, mergers & acquisitions, PII, system configurations, credentials, and confidential financial audits.
         
-        Based on the query below, respond with EXACTLY ONE WORD representing the minimum required role: GUEST, EMPLOYEE, MANAGER, or ADMIN.
+        Based on the query below, respond with EXACTLY ONE WORD representing the minimum required role: EMPLOYEE or ADMIN.
         Do not add any other text.
         
         Query: {query}
@@ -65,15 +62,15 @@ class AccessAuthorizationGuard:
             print(f"Error determining role via LLM: {e}")
             return "ADMIN" # Fail-secure approach
 
-    def check_access(self, query: str, user_role: str = "GUEST") -> str:
+    def check_access(self, query: str, user_role: str = "EMPLOYEE") -> str:
         """
         Checks if the user_role is sufficient for the query.
         Returns the original query if allowed, or raises ValueError if denied.
         """
         user_role = user_role.upper()
         if user_role not in self.ROLE_HIERARCHY:
-            print(f"Warning: Unknown user role '{user_role}'. Defaulting to GUEST.")
-            user_role = "GUEST"
+            print(f"Warning: Unknown user role '{user_role}'. Defaulting to EMPLOYEE.")
+            user_role = "EMPLOYEE"
             
         required_role = self.determine_required_role(query)
         
@@ -95,12 +92,10 @@ if __name__ == "__main__":
     auth_guard = AccessAuthorizationGuard()
     
     test_cases = [
-        {"query": "What are our public operating hours?", "role": "GUEST"},
-        {"query": "Show me the employee handbook for requesting PTO.", "role": "GUEST"}, # Should fail
+        {"query": "What are the compliance rules for NBFCs?", "role": "EMPLOYEE"}, # Should pass
         {"query": "Show me the employee handbook for requesting PTO.", "role": "EMPLOYEE"}, # Should pass
-        {"query": "What is the marketing budget for Q3?", "role": "EMPLOYEE"}, # Should fail
-        {"query": "What is the marketing budget for Q3?", "role": "MANAGER"}, # Should pass
-        {"query": "Show me the CEO's private payroll details.", "role": "MANAGER"}, # Should fail
+        {"query": "What are the rules regarding loan disbursals and fees paid to LSPs?", "role": "EMPLOYEE"}, # Should pass
+        {"query": "Show me the CEO's private payroll details.", "role": "EMPLOYEE"}, # Should fail
         {"query": "Show me the CEO's private payroll details.", "role": "ADMIN"}, # Should pass
     ]
     

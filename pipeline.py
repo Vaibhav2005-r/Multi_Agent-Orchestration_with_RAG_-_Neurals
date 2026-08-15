@@ -114,7 +114,7 @@ class MasterQueryPipeline:
         self,
         raw_query: str,
         chat_history: Optional[List[Dict[str, str]]] = None,
-        user_role: str = "GUEST"
+        user_role: str = "EMPLOYEE"
     ) -> Dict[str, Any]:
         """
         Stage 1: Spelling correction, intent detection, entity extraction,
@@ -244,7 +244,7 @@ class MasterQueryPipeline:
         self,
         query: str,
         chat_history: Optional[List[Dict[str, str]]] = None,
-        user_role: str = "GUEST"
+        user_role: str = "EMPLOYEE"
     ) -> Dict[str, Any]:
         """
         End-to-end pipeline entry point.
@@ -252,7 +252,7 @@ class MasterQueryPipeline:
         Args:
             query:        The raw user query string.
             chat_history: Optional list of prior conversation turns.
-            user_role:    RBAC role for the user (GUEST | EMPLOYEE | ADMIN).
+            user_role:    RBAC role for the user (EMPLOYEE | ADMIN).
 
         Returns:
             A dict with keys:
@@ -347,7 +347,7 @@ def parse_args():
         "--role", "-r",
         type=str,
         default="EMPLOYEE",
-        choices=["GUEST", "EMPLOYEE", "ADMIN"],
+        choices=["EMPLOYEE", "ADMIN"],
         help="User RBAC role (default: EMPLOYEE)"
     )
     parser.add_argument(

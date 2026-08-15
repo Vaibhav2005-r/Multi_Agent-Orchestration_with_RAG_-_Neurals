@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
-import { ChevronDown, ChevronRight, FileText, Clock } from 'lucide-react'
+import { ChevronDown, ChevronRight, FileText, Clock, HelpCircle } from 'lucide-react'
 import PipelineStages from './PipelineStages'
 
 // Extract confidence score from final_answer string
@@ -10,11 +10,14 @@ function extractConfidence(text) {
   return null
 }
 
-// Extract follow-up from final_answer string
-function extractFollowUp(text) {
+// Extract follow-up questions from final_answer string (handles multiple separated by |)
+function extractFollowUps(text) {
   const match = text?.match(/\*\*Suggested Follow-up:\*\*\s*(.+)/i)
-  if (match) return match[1].trim()
-  return null
+  if (!match) return []
+  return match[1]
+    .split('|')
+    .map(q => q.trim())
+    .filter(q => q.length > 5)
 }
 
 // Extract sources from final_answer string
@@ -44,7 +47,7 @@ export default function MessageBubble({ message, onFollowUp }) {
   const isUser      = message.role === 'user'
   const isBlocked   = message.blocked
   const confidence  = extractConfidence(message.content)
-  const followUp    = extractFollowUp(message.content)
+  const followUps   = extractFollowUps(message.content)
   const sources     = extractSources(message.content)
   const cleanAnswer = isUser ? message.content : stripMetadata(message.content)
 
@@ -66,7 +69,7 @@ export default function MessageBubble({ message, onFollowUp }) {
 
       {/* Metadata below assistant messages */}
       {!isUser && (
-        <div style={{ maxWidth: '82%', width: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ maxWidth: '82%', width: '100%', display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
 
           {/* Sources */}
           {sources.length > 0 && (
@@ -99,15 +102,39 @@ export default function MessageBubble({ message, onFollowUp }) {
             </div>
           )}
 
-          {/* Follow-up chip */}
-          {followUp && (
-            <div
-              className="followup-chip"
-              onClick={() => onFollowUp(followUp)}
-              title="Click to use as next query"
-            >
-              <ChevronRight size={12} />
-              {followUp}
+          {/* Suggested Follow-up Questions */}
+          {followUps.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 2 }}>
+              <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8, color: 'var(--text-muted)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <HelpCircle size={11} color="var(--purple)" /> Suggested Follow-up Questions
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {followUps.map((q, idx) => (
+                  <button
+                    key={idx}
+                    className="followup-chip"
+                    onClick={() => onFollowUp(q)}
+                    title="Click to load this question into query bar"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      background: 'rgba(123,47,255,0.12)',
+                      border: '1px solid rgba(123,47,255,0.3)',
+                      borderRadius: 16,
+                      padding: '6px 12px',
+                      fontSize: 12,
+                      color: 'var(--text-primary)',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      textAlign: 'left'
+                    }}
+                  >
+                    <ChevronRight size={12} color="var(--purple)" style={{ flexShrink: 0 }} />
+                    <span>{q}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
